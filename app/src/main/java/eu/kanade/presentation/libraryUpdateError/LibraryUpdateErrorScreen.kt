@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FindReplace
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.SelectAll
@@ -64,6 +65,7 @@ fun LibraryUpdateErrorScreen(
     onSelectAll: (Boolean) -> Unit,
     onInvertSelection: () -> Unit,
     onErrorSelected: (LibraryUpdateErrorItem, Boolean, Boolean, Boolean) -> Unit,
+    onExportErrors: () -> Unit,
     navigateUp: () -> Unit,
 ) {
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
@@ -112,6 +114,7 @@ fun LibraryUpdateErrorScreen(
                 onClickUnselectAll = { onSelectAll(false) },
                 onClickSelectAll = { onSelectAll(true) },
                 onClickInvertSelection = onInvertSelection,
+                onClickExportErrors = onExportErrors,
                 scrollBehavior = scrollBehavior,
             )
         },
@@ -303,6 +306,7 @@ private fun LibraryUpdateErrorAppBar(
     onClickUnselectAll: () -> Unit,
     onClickSelectAll: () -> Unit,
     onClickInvertSelection: () -> Unit,
+    onClickExportErrors: () -> Unit,
     scrollBehavior: TopAppBarScrollBehavior,
 ) {
     AppBar(
@@ -316,6 +320,11 @@ private fun LibraryUpdateErrorAppBar(
                             title = stringResource(MR.strings.action_select_all),
                             icon = Icons.Outlined.SelectAll,
                             onClick = onClickSelectAll,
+                        ),
+                        AppBar.Action(
+                            title = stringResource(MR.strings.export),
+                            icon = Icons.Outlined.FileDownload,
+                            onClick = onClickExportErrors,
                         ),
                     ),
                 )
