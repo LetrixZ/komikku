@@ -186,6 +186,9 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { BackupRestoreStatus() }
         addSingletonFactory { SyncStatus() }
         addSingletonFactory { LibraryUpdateStatus() }
+        addSingletonFactory { eu.kanade.domain.koharu.KoharuClient(get(), get()) }
+        addSingletonFactory { eu.kanade.domain.koharu.TranslationCache(app) }
+        addSingletonFactory { eu.kanade.domain.koharu.TranslationManager(app, get(), get(), get()) }
         // KMK <--
 
         // AM (CONNECTIONS) -->

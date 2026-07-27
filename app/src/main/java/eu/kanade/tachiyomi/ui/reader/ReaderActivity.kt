@@ -309,6 +309,11 @@ class ReaderActivity : BaseActivity() {
                     is ReaderViewModel.Event.SetCoverResult -> {
                         onSetAsCoverResult(event.result)
                     }
+                    // KMK -->
+                    ReaderViewModel.Event.TranslationNotConfigured -> {
+                        toast(tachiyomi.i18n.kmk.KMR.strings.translation_not_configured)
+                    }
+                    // KMK <--
                 }
             }
             .launchIn(lifecycleScope)
@@ -757,6 +762,10 @@ class ReaderActivity : BaseActivity() {
             },
             onClickShiftPage = ::shiftDoublePages,
             // SY <--
+            // KMK -->
+            translationEnabled = state.translationEnabled,
+            onClickTranslation = viewModel::toggleTranslation,
+            // KMK <--
         )
     }
 

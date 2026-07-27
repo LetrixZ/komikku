@@ -8,6 +8,7 @@ import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +49,10 @@ fun ReaderBottomBar(
     onClickPageLayout: () -> Unit,
     onClickShiftPage: () -> Unit,
     // SY <--
+    // KMK -->
+    translationEnabled: Boolean,
+    onClickTranslation: () -> Unit,
+    // KMK <--
     modifier: Modifier = Modifier,
 ) {
     // KMK -->
@@ -178,6 +183,20 @@ fun ReaderBottomBar(
                 )
             }
         }
+
+        // KMK -->
+        IconButton(onClick = onClickTranslation) {
+            Icon(
+                imageVector = Icons.Outlined.Translate,
+                contentDescription = stringResource(tachiyomi.i18n.kmk.KMR.strings.action_toggle_translation),
+                tint = if (translationEnabled) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    iconColor
+                },
+            )
+        }
+        // KMK <--
 
         IconButton(onClick = onClickSettings) {
             Icon(

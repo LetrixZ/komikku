@@ -99,6 +99,11 @@ object SettingsConnectionScreen : SearchableSettings {
                     Preference.PreferenceItem.InfoPreference(
                         stringResource(KMR.strings.connections_discord_info, stringResource(MR.strings.app_name)),
                     ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(KMR.strings.pref_koharu_translation),
+                        subtitle = stringResource(KMR.strings.pref_koharu_translation_summary),
+                        onClick = { navigator.push(SettingsKoharuScreen) },
+                    ),
                 ),
             ),
         )

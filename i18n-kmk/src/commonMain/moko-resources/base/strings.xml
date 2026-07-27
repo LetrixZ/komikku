@@ -238,4 +238,25 @@
     <string name="pref_discord_show_download_button_summary">Displays a button to download the app</string>
     <string name="pref_discord_show_discord_button">Show Discord Button</string>
     <string name="pref_discord_show_discord_button_summary">Displays a button to join the Discord server</string>
+    <!-- Koharu Translation -->
+    <string name="pref_koharu_translation">Koharu Translation</string>
+    <string name="pref_koharu_translation_summary">Configure manga translation service</string>
+    <string name="pref_koharu_server_url">Server URL</string>
+    <string name="pref_koharu_server_url_summary">URL of the Koharu translation server</string>
+    <string name="pref_koharu_llm_model">LLM Model</string>
+    <string name="pref_koharu_llm_model_summary">Select the language model for translation</string>
+    <string name="pref_koharu_target_language">Target Language</string>
+    <string name="pref_koharu_target_language_summary">Language to translate manga into</string>
+    <string name="action_toggle_translation">Toggle Translation</string>
+    <string name="translation_enabled">Translation enabled</string>
+    <string name="translation_disabled">Translation disabled</string>
+    <string name="translation_in_progress">Translating…</string>
+    <string name="translation_failed">Translation failed</string>
+    <string name="translation_not_configured">Please configure Koharu settings first</string>
+    <string name="koharu_fetching_models">Fetching available models…</string>
+    <string name="koharu_no_models_found">No models found. Check your server connection.</string>
+    <string name="pref_koharu_configuration">Koharu Configuration</string>
+    <string name="pref_koharu_fetching_models">Fetching available models…</string>
+    <string name="pref_koharu_connection_error">Failed to connect to Koharu server</string>
+    <string name="pref_koharu_select_model_first">Select a model first</string>
 </resources>
