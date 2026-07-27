@@ -12,7 +12,6 @@ import logcat.LogPriority
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -20,6 +19,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 
 /**
  * Client for Koharu manga translation service API.
@@ -237,17 +237,18 @@ class KoharuClient(
     /**
      * Add a page image to the current project.
      * @param serverUrl The base URL of the Koharu server
-     * @param imageFile The image file to upload
+     * @param imageStream The image stream to upload
      * @return List of page IDs that were added
      */
-    suspend fun addPage(serverUrl: String, imageFile: File): List<String> = withIOContext {
+    suspend fun addPage(serverUrl: String, imageStream: () -> InputStream): List<String> = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/pages"
+        val imageBytes = imageStream().readBytes()
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(
                 "page",
-                imageFile.name,
-                imageFile.asRequestBody("image/png".toMediaType()),
+                "page.png",
+                imageBytes.toRequestBody("image/png".toMediaType()),
             )
             .build()
 
@@ -459,7 +460,7 @@ class KoharuClient(
      * @param serverUrl The base URL of the Koharu server
      * @param chapterId The chapter ID
      * @param pageIndex The page index
-     * @param imageFile The image file to translate
+     * @param imageStream The image stream to translate
      * @param outputFile The file to save the translated image to
      * @param modelId The LLM model ID to use
      * @return True if translation succeeded, false otherwise
@@ -468,7 +469,7 @@ class KoharuClient(
         serverUrl: String,
         chapterId: Long,
         pageIndex: Int,
-        imageFile: File,
+        imageStream: () -> InputStream,
         outputFile: File,
         modelId: String,
     ): Boolean = withIOContext {
@@ -485,7 +486,7 @@ class KoharuClient(
                 val hasPages = projectHasPages(serverUrl)
                 if (!hasPages) {
                     // No pages, add the page
-                    addPage(serverUrl, imageFile)
+                    addPage(serverUrl, imageStream)
                 }
                 // If has pages, skip to LLM loading
             } else {
@@ -494,7 +495,7 @@ class KoharuClient(
                 // Project is automatically loaded
 
                 // Step 2: Add the page
-                addPage(serverUrl, imageFile)
+                addPage(serverUrl, imageStream)
             }
 
             // Step 3: Load LLM

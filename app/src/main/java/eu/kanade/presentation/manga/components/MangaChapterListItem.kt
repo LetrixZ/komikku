@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.domain.koharu.TranslationPreFetchManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -61,11 +62,13 @@ fun MangaChapterListItem(
     downloadIndicatorEnabled: Boolean,
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
+    translationStateProvider: (() -> TranslationPreFetchManager.ChapterTranslationState?)? = null,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onLongClick: () -> Unit,
     onClick: () -> Unit,
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
+    onTranslationClick: ((ChapterTranslationAction) -> Unit)? = null,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -199,13 +202,30 @@ fun MangaChapterListItem(
                 }
             }
 
-            ChapterDownloadIndicator(
-                enabled = downloadIndicatorEnabled,
-                modifier = Modifier.padding(start = 4.dp),
-                downloadStateProvider = downloadStateProvider,
-                downloadProgressProvider = downloadProgressProvider,
-                onClick = { onDownloadClick?.invoke(it) },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (translationStateProvider != null) {
+                    ChapterTranslationIndicator(
+                        enabled = true,
+                        translationStateProvider = translationStateProvider,
+                        onClick = { action ->
+                            when (action) {
+                                ChapterTranslationAction.START,
+                                ChapterTranslationAction.CANCEL,
+                                -> onTranslationClick?.invoke(action)
+
+                                ChapterTranslationAction.DELETE -> onTranslationClick?.invoke(action)
+                            }
+                        },
+                    )
+                }
+
+                ChapterDownloadIndicator(
+                    enabled = downloadIndicatorEnabled,
+                    downloadStateProvider = downloadStateProvider,
+                    downloadProgressProvider = downloadProgressProvider,
+                    onClick = { onDownloadClick?.invoke(it) },
+                )
+            }
         }
     }
 }
@@ -225,12 +245,14 @@ internal fun getSwipeAction(
             isUndo = read,
             onSwipe = onSwipe,
         )
+
         LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> swipeAction(
             icon = if (!bookmark) Icons.Outlined.BookmarkAdd else Icons.Outlined.BookmarkRemove,
             background = background,
             isUndo = bookmark,
             onSwipe = onSwipe,
         )
+
         LibraryPreferences.ChapterSwipeAction.Download -> swipeAction(
             icon = when (downloadState) {
                 Download.State.NOT_DOWNLOADED, Download.State.ERROR -> Icons.Outlined.Download
@@ -240,6 +262,7 @@ internal fun getSwipeAction(
             background = background,
             onSwipe = onSwipe,
         )
+
         LibraryPreferences.ChapterSwipeAction.Disabled -> null
     }
 }

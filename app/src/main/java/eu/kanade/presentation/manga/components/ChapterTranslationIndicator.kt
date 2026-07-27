@@ -9,8 +9,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
@@ -28,51 +28,49 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.components.DropdownMenu
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.download.model.Download
-import tachiyomi.i18n.MR
+import eu.kanade.domain.koharu.TranslationPreFetchManager
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 
-enum class ChapterDownloadAction {
+enum class ChapterTranslationAction {
     START,
-    START_NOW,
     CANCEL,
     DELETE,
 }
 
 @Composable
-fun ChapterDownloadIndicator(
+fun ChapterTranslationIndicator(
     enabled: Boolean,
-    downloadStateProvider: () -> Download.State,
-    downloadProgressProvider: () -> Int,
-    onClick: (ChapterDownloadAction) -> Unit,
+    translationStateProvider: () -> TranslationPreFetchManager.ChapterTranslationState?,
+    onClick: (ChapterTranslationAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    when (val downloadState = downloadStateProvider()) {
-        Download.State.NOT_DOWNLOADED -> NotDownloadedIndicator(
+    val translationState = translationStateProvider()
+
+    when (translationState?.state) {
+        TranslationPreFetchManager.ChapterTranslationState.State.QUEUED,
+        TranslationPreFetchManager.ChapterTranslationState.State.TRANSLATING,
+        -> TranslatingIndicator(
+            enabled = enabled,
+            modifier = modifier,
+            translationState = translationState,
+            onClick = onClick,
+        )
+        TranslationPreFetchManager.ChapterTranslationState.State.TRANSLATED -> TranslatedIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
         )
-        Download.State.QUEUE, Download.State.DOWNLOADING -> DownloadingIndicator(
-            enabled = enabled,
-            modifier = modifier,
-            downloadState = downloadState,
-            downloadProgressProvider = downloadProgressProvider,
-            onClick = onClick,
-        )
-        Download.State.DOWNLOADED -> DownloadedIndicator(
+        TranslationPreFetchManager.ChapterTranslationState.State.ERROR -> ErrorIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
         )
-        Download.State.ERROR -> ErrorIndicator(
+        else -> NotTranslatedIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
@@ -81,10 +79,10 @@ fun ChapterDownloadIndicator(
 }
 
 @Composable
-private fun NotDownloadedIndicator(
+private fun NotTranslatedIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
-    onClick: (ChapterDownloadAction) -> Unit,
+    onClick: (ChapterTranslationAction) -> Unit,
 ) {
     Box(
         modifier = modifier
@@ -92,46 +90,45 @@ private fun NotDownloadedIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                onLongClick = { onClick(ChapterDownloadAction.START_NOW) },
-                onClick = { onClick(ChapterDownloadAction.START) },
+                onLongClick = { onClick(ChapterTranslationAction.START) },
+                onClick = { onClick(ChapterTranslationAction.START) },
             )
             .secondaryItemAlpha(),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_download_chapter_24dp),
-            contentDescription = stringResource(MR.strings.manga_download),
+            imageVector = Icons.Outlined.Translate,
+            contentDescription = stringResource(KMR.strings.action_translate_chapter),
             modifier = Modifier.size(IndicatorSize),
-            tint = MaterialTheme.colorScheme.primary, // KMK: onSurfaceVariant
+            tint = MaterialTheme.colorScheme.primary,
         )
     }
 }
 
 @Composable
-private fun DownloadingIndicator(
+private fun TranslatingIndicator(
     enabled: Boolean,
-    downloadState: Download.State,
-    downloadProgressProvider: () -> Int,
-    onClick: (ChapterDownloadAction) -> Unit,
+    translationState: TranslationPreFetchManager.ChapterTranslationState,
     modifier: Modifier = Modifier,
+    onClick: (ChapterTranslationAction) -> Unit,
 ) {
-    var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
             .size(IconButtonTokens.StateLayerSize)
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                onLongClick = { onClick(ChapterDownloadAction.CANCEL) },
-                onClick = { isMenuExpanded = true },
+                onLongClick = { onClick(ChapterTranslationAction.CANCEL) },
+                onClick = { onClick(ChapterTranslationAction.CANCEL) },
             ),
         contentAlignment = Alignment.Center,
     ) {
         val arrowColor: Color
-        val strokeColor = MaterialTheme.colorScheme.primary // KMK: onSurfaceVariant
-        val downloadProgress = downloadProgressProvider()
-        val indeterminate = downloadState == Download.State.QUEUE ||
-            (downloadState == Download.State.DOWNLOADING && downloadProgress == 0)
+        val strokeColor = MaterialTheme.colorScheme.primary
+        val progress = translationState.progress
+        val indeterminate = translationState.state == TranslationPreFetchManager.ChapterTranslationState.State.QUEUED ||
+            (translationState.state == TranslationPreFetchManager.ChapterTranslationState.State.TRANSLATING && progress == 0)
+
         if (indeterminate) {
             arrowColor = strokeColor
             CircularProgressIndicator(
@@ -143,7 +140,7 @@ private fun DownloadingIndicator(
             )
         } else {
             val animatedProgress by animateFloatAsState(
-                targetValue = downloadProgress / 100f,
+                targetValue = progress / 100f,
                 animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
             )
             arrowColor = if (animatedProgress < 0.5f) {
@@ -161,24 +158,9 @@ private fun DownloadingIndicator(
                 gapSize = 0.dp,
             )
         }
-        DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
-            DropdownMenuItem(
-                text = { Text(text = stringResource(MR.strings.action_start_downloading_now)) },
-                onClick = {
-                    onClick(ChapterDownloadAction.START_NOW)
-                    isMenuExpanded = false
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(text = stringResource(MR.strings.action_cancel)) },
-                onClick = {
-                    onClick(ChapterDownloadAction.CANCEL)
-                    isMenuExpanded = false
-                },
-            )
-        }
+
         Icon(
-            imageVector = Icons.Outlined.ArrowDownward,
+            imageVector = Icons.Outlined.Translate,
             contentDescription = null,
             modifier = ArrowModifier,
             tint = arrowColor,
@@ -187,20 +169,19 @@ private fun DownloadingIndicator(
 }
 
 @Composable
-private fun DownloadedIndicator(
+private fun TranslatedIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
-    onClick: (ChapterDownloadAction) -> Unit,
+    onClick: (ChapterTranslationAction) -> Unit,
 ) {
-    var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
             .size(IconButtonTokens.StateLayerSize)
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                onLongClick = { isMenuExpanded = true },
-                onClick = { isMenuExpanded = true },
+                onLongClick = { onClick(ChapterTranslationAction.DELETE) },
+                onClick = { onClick(ChapterTranslationAction.DELETE) },
             ),
         contentAlignment = Alignment.Center,
     ) {
@@ -208,17 +189,8 @@ private fun DownloadedIndicator(
             imageVector = Icons.Filled.CheckCircle,
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
-            tint = MaterialTheme.colorScheme.primary, // KMK: onSurfaceVariant
+            tint = MaterialTheme.colorScheme.primary,
         )
-        DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
-            DropdownMenuItem(
-                text = { Text(text = stringResource(MR.strings.action_delete)) },
-                onClick = {
-                    onClick(ChapterDownloadAction.DELETE)
-                    isMenuExpanded = false
-                },
-            )
-        }
     }
 }
 
@@ -226,7 +198,7 @@ private fun DownloadedIndicator(
 private fun ErrorIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
-    onClick: (ChapterDownloadAction) -> Unit,
+    onClick: (ChapterTranslationAction) -> Unit,
 ) {
     Box(
         modifier = modifier
@@ -234,46 +206,16 @@ private fun ErrorIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                onLongClick = { onClick(ChapterDownloadAction.START) },
-                onClick = { onClick(ChapterDownloadAction.START) },
+                onLongClick = { onClick(ChapterTranslationAction.START) },
+                onClick = { onClick(ChapterTranslationAction.START) },
             ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = Icons.Outlined.ErrorOutline,
-            contentDescription = stringResource(MR.strings.chapter_error),
+            contentDescription = stringResource(KMR.strings.chapter_translation_error),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.error,
         )
     }
 }
-
-internal fun Modifier.commonClickable(
-    enabled: Boolean,
-    hapticFeedback: HapticFeedback,
-    onLongClick: () -> Unit,
-    onClick: () -> Unit,
-) = this.combinedClickable(
-    enabled = enabled,
-    onLongClick = {
-        onLongClick()
-        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-    },
-    onClick = onClick,
-    role = Role.Button,
-    interactionSource = null,
-    indication = ripple(
-        bounded = false,
-        radius = IconButtonTokens.StateLayerSize / 2,
-    ),
-)
-
-internal val IndicatorSize = 26.dp
-internal val IndicatorPadding = 2.dp
-internal val IndicatorStrokeWidth = IndicatorPadding
-
-internal val IndicatorModifier = Modifier
-    .size(IndicatorSize)
-    .padding(IndicatorPadding)
-internal val ArrowModifier = Modifier
-    .size(IndicatorSize - 7.dp)

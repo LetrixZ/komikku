@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.screen
 
+import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,8 +17,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import eu.kanade.domain.koharu.KoharuClient
 import eu.kanade.domain.koharu.KoharuPreferences
+import eu.kanade.domain.koharu.TranslationCache
 import eu.kanade.presentation.more.settings.Preference
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -42,8 +45,10 @@ object SettingsKoharuScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
+        val context = LocalContext.current
         val koharuPreferences = remember { Injekt.get<KoharuPreferences>() }
         val koharuClient = remember { Injekt.get<KoharuClient>() }
+        val translationCache = remember { Injekt.get<TranslationCache>() }
         val scope = rememberCoroutineScope()
 
         val serverUrlPref = koharuPreferences.koharuServerUrl()
@@ -56,6 +61,8 @@ object SettingsKoharuScreen : SearchableSettings {
         var isLoadingModels by remember { mutableStateOf(false) }
         var availableModels by remember { mutableStateOf<List<KoharuClient.LocalModel>>(emptyList()) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
+        var showClearCacheDialog by remember { mutableStateOf(false) }
+        var cacheSize by remember { mutableStateOf(translationCache.getCacheSizeFormatted()) }
 
         // Fetch models when entering the screen
         remember {
@@ -119,8 +126,68 @@ object SettingsKoharuScreen : SearchableSettings {
                         },
                         enabled = languageEntries.isNotEmpty(),
                     ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(KMR.strings.pref_koharu_clear_cache),
+                        subtitle = stringResource(KMR.strings.pref_koharu_clear_cache_summary, cacheSize),
+                        onClick = { showClearCacheDialog = true },
+                    ),
                 ),
             ),
-        )
+        ).also {
+            if (showClearCacheDialog) {
+                ClearCacheDialog(
+                    context = context,
+                    translationCache = translationCache,
+                    onDismiss = { showClearCacheDialog = false },
+                    onCacheCleared = {
+                        cacheSize = translationCache.getCacheSizeFormatted()
+                    },
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun ClearCacheDialog(
+    context: Context,
+    translationCache: TranslationCache,
+    onDismiss: () -> Unit,
+    onCacheCleared: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val cacheClearedMessage = stringResource(KMR.strings.pref_koharu_cache_cleared)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(KMR.strings.pref_koharu_clear_cache_confirm_title))
+        },
+        text = {
+            Text(stringResource(KMR.strings.pref_koharu_clear_cache_confirm_message))
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        translationCache.clearCache()
+                        onCacheCleared()
+                        onDismiss()
+                        android.widget.Toast.makeText(
+                            context,
+                            cacheClearedMessage,
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            ) {
+                Text(stringResource(tachiyomi.i18n.MR.strings.action_ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(tachiyomi.i18n.MR.strings.action_cancel))
+            }
+        },
+    )
 }

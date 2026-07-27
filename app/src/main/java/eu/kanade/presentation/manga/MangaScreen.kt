@@ -208,6 +208,7 @@ fun MangaScreen(
     coverRatio: MutableFloatState,
     onPaletteScreenClick: () -> Unit,
     hazeState: HazeState,
+    onTranslationChapter: ((List<ChapterList.Item>, eu.kanade.presentation.manga.components.ChapterTranslationAction) -> Unit)?,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -277,6 +278,7 @@ fun MangaScreen(
             coverRatio = coverRatio,
             onPaletteScreenClick = onPaletteScreenClick,
             hazeState = hazeState,
+            onTranslationChapter = onTranslationChapter,
             // KMK <--
         )
     } else {
@@ -339,6 +341,7 @@ fun MangaScreen(
             coverRatio = coverRatio,
             onPaletteScreenClick = onPaletteScreenClick,
             hazeState = hazeState,
+            onTranslationChapter = onTranslationChapter,
             // KMK <--
         )
     }
@@ -418,6 +421,7 @@ private fun MangaScreenSmallImpl(
     coverRatio: MutableFloatState,
     onPaletteScreenClick: () -> Unit,
     hazeState: HazeState,
+    onTranslationChapter: ((List<ChapterList.Item>, eu.kanade.presentation.manga.components.ChapterTranslationAction) -> Unit)?,
     // KMK <--
 ) {
     val chapterListState = rememberLazyListState()
@@ -799,6 +803,7 @@ private fun MangaScreenSmallImpl(
                         // SY <--
                         onChapterClicked = onChapterClicked,
                         onDownloadChapter = onDownloadChapter,
+                        onTranslationChapter = onTranslationChapter,
                         onChapterSelected = onChapterSelected,
                         onChapterSwipe = onChapterSwipe,
                     )
@@ -882,6 +887,7 @@ private fun MangaScreenLargeImpl(
     coverRatio: MutableFloatState,
     onPaletteScreenClick: () -> Unit,
     hazeState: HazeState,
+    onTranslationChapter: ((List<ChapterList.Item>, eu.kanade.presentation.manga.components.ChapterTranslationAction) -> Unit)?,
     // KMK <--
 ) {
     val layoutDirection = LocalLayoutDirection.current
@@ -1238,6 +1244,7 @@ private fun MangaScreenLargeImpl(
                                 // SY <--
                                 onChapterClicked = onChapterClicked,
                                 onDownloadChapter = onDownloadChapter,
+                                onTranslationChapter = onTranslationChapter,
                                 onChapterSelected = onChapterSelected,
                                 onChapterSwipe = onChapterSwipe,
                             )
@@ -1303,6 +1310,7 @@ private fun LazyListScope.sharedChapterItems(
     // SY <--
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
+    onTranslationChapter: ((List<ChapterList.Item>, eu.kanade.presentation.manga.components.ChapterTranslationAction) -> Unit)?,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
 ) {
@@ -1369,6 +1377,7 @@ private fun LazyListScope.sharedChapterItems(
                     !isAnyChapterSelected && !(mergedData?.manga?.get(item.chapter.mangaId) ?: manga).isLocal(),
                     downloadStateProvider = { item.downloadState },
                     downloadProgressProvider = { item.downloadProgress },
+                    translationStateProvider = { item.translationState },
                     chapterSwipeStartAction = chapterSwipeStartAction,
                     chapterSwipeEndAction = chapterSwipeEndAction,
                     onLongClick = {
@@ -1385,6 +1394,11 @@ private fun LazyListScope.sharedChapterItems(
                     },
                     onDownloadClick = if (onDownloadChapter != null) {
                         { onDownloadChapter(listOf(item), it) }
+                    } else {
+                        null
+                    },
+                    onTranslationClick = if (onTranslationChapter != null) {
+                        { action -> onTranslationChapter(listOf(item), action) }
                     } else {
                         null
                     },

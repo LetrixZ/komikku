@@ -461,6 +461,7 @@ class MangaScreen(
             coverRatio = coverRatio,
             onPaletteScreenClick = { navigator.push(PaletteScreen(successState.seedColor?.toArgb())) },
             hazeState = hazeState,
+            onTranslationChapter = screenModel::runChapterTranslationActions.takeIf { !successState.source.isLocalOrStub() },
             // KMK <--
         )
 

@@ -21,6 +21,8 @@ import logcat.logcat
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
+import java.io.InputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Manager for handling manga page translation via Koharu service.
@@ -48,7 +50,7 @@ class TranslationManager(
     data class TranslationRequest(
         val chapterId: Long,
         val pageIndex: Int,
-        val imageFile: File,
+        val imageStream: () -> InputStream,
         val chapter: ReaderChapter,
     )
 
@@ -100,7 +102,7 @@ class TranslationManager(
     /**
      * Queue a page for translation.
      */
-    fun queuePage(chapter: ReaderChapter, page: ReaderPage, imageFile: File) {
+    fun queuePage(chapter: ReaderChapter, page: ReaderPage, imageStream: () -> InputStream) {
         logcat { "Queue page, chapterId=${chapter.chapter.id} pageIndex=${page.index}" }
         if (!_isTranslationEnabled.value) return
 
@@ -128,7 +130,7 @@ class TranslationManager(
                     return@launch
                 }
 
-                translationQueue.add(TranslationRequest(chapterId, pageIndex, imageFile, chapter))
+                translationQueue.add(TranslationRequest(chapterId, pageIndex, imageStream, chapter))
                 updateTranslationStatusLocked(pageIndex, TranslationStatus.Queued)
                 logcat { "Queued page $pageIndex for translation" }
             }
@@ -139,9 +141,7 @@ class TranslationManager(
      * Start processing the translation queue.
      */
     private fun startProcessing() {
-        if (processingJob?.isActive == true) {
-            return
-        }
+        if (processingJob?.isActive == true) return
 
         processingJob = scope.launch {
             isProcessing = true
@@ -151,7 +151,7 @@ class TranslationManager(
                         _translationState.value[it.pageIndex] is TranslationStatus.Queued
                     }
                 } ?: run {
-                    delay(500)
+                    delay(500.milliseconds)
                     continue
                 }
 
@@ -182,7 +182,7 @@ class TranslationManager(
                     serverUrl = serverUrl,
                     chapterId = request.chapterId,
                     pageIndex = pageIndex,
-                    imageFile = request.imageFile,
+                    imageStream = request.imageStream,
                     outputFile = outputFile,
                     modelId = model,
                 )
@@ -227,7 +227,7 @@ class TranslationManager(
     }
 
     private fun updateTranslationStatusLocked(pageIndex: Int, status: TranslationStatus) {
-        _translationState.value = _translationState.value + (pageIndex to status)
+        _translationState.value += (pageIndex to status)
     }
 
     /**

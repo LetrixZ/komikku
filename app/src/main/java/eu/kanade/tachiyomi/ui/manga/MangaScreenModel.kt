@@ -28,6 +28,7 @@ import eu.kanade.core.util.addOrRemove
 import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
+import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.GetPagePreviews
 import eu.kanade.domain.manga.interactor.SetExcludedScanlators
@@ -231,6 +232,7 @@ class MangaScreenModel(
     private val insertLibraryUpdateErrors: InsertLibraryUpdateErrors = Injekt.get(),
     private val insertLibraryUpdateErrorMessages: InsertLibraryUpdateErrorMessages = Injekt.get(),
     private val deleteChaptersFromDb: DeleteChapters = Injekt.get(),
+    private val translationPreFetchManager: eu.kanade.domain.koharu.TranslationPreFetchManager = Injekt.get(),
     // KMK <--
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -428,6 +430,9 @@ class MangaScreenModel(
         }
 
         observeDownloads()
+        // KMK -->
+        observeTranslations()
+        // KMK <--
 
         screenModelScope.launchIO {
             val manga = getMangaAndChapters.awaitManga(mangaId)
@@ -1066,6 +1071,37 @@ class MangaScreenModel(
         }
     }
 
+    // KMK -->
+    private fun updateTranslationState(state: eu.kanade.domain.koharu.TranslationPreFetchManager.ChapterTranslationState) {
+        updateSuccessState { successState ->
+            val modifiedIndex = successState.chapters.indexOfFirst { it.id == state.chapterId }
+            if (modifiedIndex < 0) return@updateSuccessState successState
+
+            val newChapters = successState.chapters.toMutableList().apply {
+                val item = removeAt(modifiedIndex)
+                    .copy(translationState = state)
+                add(modifiedIndex, item)
+            }
+            successState.copy(chapters = newChapters)
+        }
+    }
+
+    private fun observeTranslations() {
+        screenModelScope.launchIO {
+            translationPreFetchManager.chapterTranslationStates
+                .catch { error -> logcat(LogPriority.ERROR, error) }
+                .flowWithLifecycle(lifecycle)
+                .collect { states ->
+                    withUIContext {
+                        states.values.forEach { state ->
+                            updateTranslationState(state)
+                        }
+                    }
+                }
+        }
+    }
+    // KMK <--
+
     private fun List<Chapter>.toChapterListItems(
         manga: Manga,
         // SY -->
@@ -1116,6 +1152,9 @@ class MangaScreenModel(
                 sourceName = source?.getNameForMangaInfo(),
                 showScanlator = !isExhManga,
                 // SY <--
+                // KMK -->
+                translationState = chapter.id.let { translationPreFetchManager.getChapterState(it) },
+                // KMK <--
             )
         }
     }
@@ -1334,6 +1373,57 @@ class MangaScreenModel(
         }
     }
 
+    // KMK -->
+    fun runChapterTranslationActions(
+        items: List<ChapterList.Item>,
+        action: eu.kanade.presentation.manga.components.ChapterTranslationAction,
+    ) {
+        when (action) {
+            eu.kanade.presentation.manga.components.ChapterTranslationAction.START -> {
+                val item = items.singleOrNull() ?: return
+                startChapterTranslation(item)
+            }
+            eu.kanade.presentation.manga.components.ChapterTranslationAction.CANCEL -> {
+                val chapterId = items.singleOrNull()?.id ?: return
+                cancelChapterTranslation(chapterId)
+            }
+            eu.kanade.presentation.manga.components.ChapterTranslationAction.DELETE -> {
+                val chapterId = items.singleOrNull()?.id ?: return
+                deleteChapterTranslation(chapterId)
+            }
+        }
+    }
+
+    private fun startChapterTranslation(item: ChapterList.Item) {
+        val chapter = item.chapter
+        val manga = successState?.manga ?: return
+
+        screenModelScope.launchIO {
+            try {
+                // Get page list for the chapter
+                val source = sourceManager.getOrStub(manga.source)
+                val pages = source.getPageList(chapter.toSChapter())
+
+                translationPreFetchManager.startTranslation(
+                    manga = manga,
+                    chapter = chapter,
+                    pages = pages,
+                )
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to start translation for chapter ${chapter.id}" }
+            }
+        }
+    }
+
+    private fun cancelChapterTranslation(chapterId: Long) {
+        translationPreFetchManager.cancelTranslation(chapterId)
+    }
+
+    private fun deleteChapterTranslation(chapterId: Long) {
+        translationPreFetchManager.deleteTranslation(chapterId)
+    }
+    // KMK <--
+
     fun runDownloadAction(action: DownloadAction) {
         val chaptersToDownload = when (action) {
             DownloadAction.NEXT_1_CHAPTER -> getUnreadChaptersSorted().take(1)
@@ -1354,6 +1444,7 @@ class MangaScreenModel(
         updateDownloadState(activeDownload.apply { status = Download.State.NOT_DOWNLOADED })
     }
 
+    // KMK -->
     fun markPreviousChapterRead(pointer: Chapter) {
         val manga = successState?.manga ?: return
         val chapters = filteredChapters.orEmpty().map { it.chapter }
@@ -2123,6 +2214,9 @@ sealed class ChapterList {
         val sourceName: String?,
         val showScanlator: Boolean,
         // SY <--
+        // KMK -->
+        val translationState: eu.kanade.domain.koharu.TranslationPreFetchManager.ChapterTranslationState? = null,
+        // KMK <--
     ) : ChapterList() {
         val id = chapter.id
         val isDownloaded = downloadState == Download.State.DOWNLOADED

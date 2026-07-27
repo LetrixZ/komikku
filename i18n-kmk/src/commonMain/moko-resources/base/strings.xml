@@ -259,4 +259,13 @@
     <string name="pref_koharu_fetching_models">Fetching available models…</string>
     <string name="pref_koharu_connection_error">Failed to connect to Koharu server</string>
     <string name="pref_koharu_select_model_first">Select a model first</string>
+
+    <!-- Translation -->
+    <string name="action_translate_chapter">Translate chapter</string>
+    <string name="chapter_translation_error">Translation error</string>
+    <string name="pref_koharu_clear_cache">Clear translation cache</string>
+    <string name="pref_koharu_clear_cache_summary">Remove all cached translations (%s)</string>
+    <string name="pref_koharu_clear_cache_confirm_title">Clear translation cache?</string>
+    <string name="pref_koharu_clear_cache_confirm_message">This will remove all cached translations. Translated pages will need to be re-translated.</string>
+    <string name="pref_koharu_cache_cleared">Translation cache cleared</string>
 </resources>

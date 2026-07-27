@@ -21,6 +21,7 @@ import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -106,6 +107,8 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
+import java.io.File
 import java.time.Instant
 import java.util.Date
 
@@ -180,6 +183,8 @@ class ReaderViewModel @JvmOverloads constructor(
         }
 
     // KMK -->
+    private val context: Application by injectLazy()
+
     fun handleDownloadAction(chapter: Chapter, action: ChapterDownloadAction) {
         when (action) {
             ChapterDownloadAction.START -> downloadChapter(chapter)
@@ -443,24 +448,11 @@ class ReaderViewModel @JvmOverloads constructor(
     private fun queueChapterForTranslation(chapter: ReaderChapter) {
         viewModelScope.launchIO {
             val pages = chapter.pages ?: return@launchIO
-            val chapterId = chapter.chapter.id ?: return@launchIO
 
             for (page in pages) {
                 if (page.status == Page.State.Ready) {
-                    // Get the image file from cache
-                    val imageUrl = page.imageUrl ?: continue
-                    val imageFile = try {
-                        val chapterCache = Injekt.get<eu.kanade.tachiyomi.data.cache.ChapterCache>()
-                        if (chapterCache.isImageInCache(imageUrl)) {
-                            chapterCache.getImageFile(imageUrl)
-                        } else {
-                            continue
-                        }
-                    } catch (e: Exception) {
-                        continue
-                    }
-
-                    translationManager.queuePage(chapter, page, imageFile)
+                    val stream = page.stream ?: continue
+                    translationManager.queuePage(chapter, page, stream)
                 }
             }
         }
@@ -508,7 +500,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val pages = currentChapter.pages ?: return
 
         viewModelScope.launchIO {
-            val chapterCache = Injekt.get<eu.kanade.tachiyomi.data.cache.ChapterCache>()
+            val chapterCache = Injekt.get<ChapterCache>()
 
             for (page in pages) {
                 val imageUrl = page.imageUrl ?: continue
