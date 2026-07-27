@@ -49,6 +49,17 @@ object Notifications {
     const val ID_DOWNLOAD_CHAPTER_ERROR = -202
 
     /**
+     * Notification channel and ids used by the translation system.
+     */
+    // KMK -->
+    private const val GROUP_TRANSLATION = "group_translation"
+    const val CHANNEL_TRANSLATION_PROGRESS = "translation_progress_channel"
+    const val ID_TRANSLATION_PROGRESS = -251
+    const val CHANNEL_TRANSLATION_ERROR = "translation_error_channel"
+    const val ID_TRANSLATION_ERROR = -252
+    // KMK <--
+
+    /**
      * Notification channel and ids used by the library updater.
      */
     const val CHANNEL_NEW_CHAPTERS = "new_chapters_channel"
@@ -139,6 +150,11 @@ object Notifications {
                 buildNotificationChannelGroup(GROUP_APK_UPDATES) {
                     setName(context.stringResource(MR.strings.label_recent_updates))
                 },
+                // KMK -->
+                buildNotificationChannelGroup(GROUP_TRANSLATION) {
+                    setName("Translation")
+                },
+                // KMK <--
             ),
         )
 
@@ -170,6 +186,18 @@ object Notifications {
                     setGroup(GROUP_DOWNLOADER)
                     setShowBadge(false)
                 },
+                // KMK -->
+                buildNotificationChannel(CHANNEL_TRANSLATION_PROGRESS, IMPORTANCE_LOW) {
+                    setName("Translation progress")
+                    setGroup(GROUP_TRANSLATION)
+                    setShowBadge(false)
+                },
+                buildNotificationChannel(CHANNEL_TRANSLATION_ERROR, IMPORTANCE_LOW) {
+                    setName("Translation errors")
+                    setGroup(GROUP_TRANSLATION)
+                    setShowBadge(false)
+                },
+                // KMK <--
                 buildNotificationChannel(CHANNEL_BACKUP_RESTORE_PROGRESS, IMPORTANCE_LOW) {
                     setName(context.stringResource(MR.strings.channel_progress))
                     setGroup(GROUP_BACKUP_RESTORE)

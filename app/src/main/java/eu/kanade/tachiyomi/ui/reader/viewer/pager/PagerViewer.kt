@@ -64,6 +64,26 @@ abstract class PagerViewer(
     )
 
     /**
+     * Refresh the adapter to reload visible pages.
+     */
+    fun refreshPages() {
+        // Force refresh by temporarily clearing and resetting the adapter
+        val currentPosition = pager.currentItem
+        val currentItems = adapter.joinedItems.toList()
+
+        // Clear and reset to force view recreation
+        adapter.joinedItems.clear()
+        adapter.notifyDataSetChanged()
+
+        // Restore items
+        adapter.joinedItems.addAll(currentItems)
+        adapter.notifyDataSetChanged()
+
+        // Restore position
+        pager.setCurrentItem(currentPosition, false)
+    }
+
+    /**
      * Currently active item. It can be a chapter page or a chapter transition.
      */
     /* [EXH] private */

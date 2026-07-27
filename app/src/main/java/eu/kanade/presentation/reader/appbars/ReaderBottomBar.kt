@@ -190,7 +190,7 @@ fun ReaderBottomBar(
                 imageVector = Icons.Outlined.Translate,
                 contentDescription = stringResource(tachiyomi.i18n.kmk.KMR.strings.action_toggle_translation),
                 tint = if (translationEnabled) {
-                    MaterialTheme.colorScheme.secondary
+                    MaterialTheme.colorScheme.tertiary
                 } else {
                     iconColor
                 },

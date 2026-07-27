@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import logcat.logcat
 import mihon.core.archive.archiveReader
@@ -48,15 +49,25 @@ class TranslationPreFetchManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val context: Application by injectLazy()
     private val queueMutex = Mutex()
+    private val notifier = TranslationNotifier(context)
 
     // Track translation state per chapter
     private val _chapterTranslationStates = MutableStateFlow<Map<Long, ChapterTranslationState>>(emptyMap())
     val chapterTranslationStates: StateFlow<Map<Long, ChapterTranslationState>> =
         _chapterTranslationStates.asStateFlow()
 
-    private val translationJobs = mutableMapOf<Long, Job>()
+    // Queue for pending translations
+    private val translationQueue = mutableListOf<TranslationRequest>()
+    private var currentTranslationJob: Job? = null
+    private var isTranslating = false
 
     private var archivePageLoader: ArchivePageLoader? = null
+
+    data class TranslationRequest(
+        val manga: Manga,
+        val chapter: Chapter,
+        val pages: List<Page>,
+    )
 
     data class ChapterTranslationState(
         val chapterId: Long,
@@ -75,7 +86,7 @@ class TranslationPreFetchManager(
     }
 
     /**
-     * Start pre-translating a chapter.
+     * Start pre-translating a chapter. If another translation is in progress, it will be queued.
      */
     fun startTranslation(manga: Manga, chapter: Chapter, pages: List<Page>) {
         if (!translationManager.isConfigured()) {
@@ -105,45 +116,181 @@ class TranslationPreFetchManager(
             ),
         )
 
-        // Start translation job
-        val job = scope.launch {
-            translateChapter(manga, chapter, pages)
+        // Add to queue
+        scope.launch {
+            queueMutex.withLock {
+                translationQueue.add(TranslationRequest(manga, chapter, pages))
+                logcat { "Queued translation for chapter $chapterId" }
+            }
+            processQueue()
         }
-        translationJobs[chapterId] = job
+    }
+
+    /**
+     * Process the translation queue. Only one translation can be active at a time.
+     */
+    private fun processQueue() {
+        scope.launch {
+            queueMutex.withLock {
+                if (isTranslating || translationQueue.isEmpty()) {
+                    return@withLock
+                }
+
+                isTranslating = true
+                val request = translationQueue.removeAt(0)
+                val chapterId = request.chapter.id ?: return@launch
+
+                // Update state to translating
+                updateChapterState(
+                    ChapterTranslationState(
+                        chapterId = chapterId,
+                        state = ChapterTranslationState.State.TRANSLATING,
+                        progress = 0,
+                        totalPages = request.pages.size,
+                        translatedPages = 0,
+                    ),
+                )
+
+                currentTranslationJob = scope.launch {
+                    try {
+                        translateChapter(request.manga, request.chapter, request.pages)
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e) { "Translation failed for chapter $chapterId" }
+                        notifier.onError(
+                            mangaTitle = request.manga.title,
+                            chapterName = request.chapter.name,
+                            error = e.message,
+                        )
+                    } finally {
+                        queueMutex.withLock {
+                            isTranslating = false
+                            currentTranslationJob = null
+                        }
+                        // Process next item in queue
+                        processQueue()
+                    }
+                }
+            }
+        }
     }
 
     /**
      * Cancel translation for a chapter.
      */
     fun cancelTranslation(chapterId: Long) {
-        translationJobs[chapterId]?.cancel()
-        translationJobs.remove(chapterId)
-        updateChapterState(
-            ChapterTranslationState(
-                chapterId = chapterId,
-                state = ChapterTranslationState.State.NOT_TRANSLATED,
-                progress = 0,
-                totalPages = 0,
-                translatedPages = 0,
-            ),
-        )
+        scope.launch {
+            queueMutex.withLock {
+                // Remove from queue if present
+                translationQueue.removeAll { it.chapter.id == chapterId }
+
+                // Cancel current job if it's for this chapter
+                if (currentTranslationJob?.isActive == true) {
+                    val currentChapterId = _chapterTranslationStates.value.entries
+                        .find { it.value.state == ChapterTranslationState.State.TRANSLATING }
+                        ?.key
+                    if (currentChapterId == chapterId) {
+                        currentTranslationJob?.cancel()
+                        isTranslating = false
+                        notifier.dismissProgress()
+                    }
+                }
+            }
+
+            updateChapterState(
+                ChapterTranslationState(
+                    chapterId = chapterId,
+                    state = ChapterTranslationState.State.NOT_TRANSLATED,
+                    progress = 0,
+                    totalPages = 0,
+                    translatedPages = 0,
+                ),
+            )
+        }
+    }
+
+    /**
+     * Clear all pending translations in the queue.
+     * Called when entering the reader to prevent conflicts with in-reader translation.
+     */
+    fun clearQueue() {
+        scope.launch {
+            queueMutex.withLock {
+                // Cancel all queued translations
+                translationQueue.forEach { request ->
+                    val chapterId = request.chapter.id ?: return@forEach
+                    updateChapterState(
+                        ChapterTranslationState(
+                            chapterId = chapterId,
+                            state = ChapterTranslationState.State.NOT_TRANSLATED,
+                            progress = 0,
+                            totalPages = 0,
+                            translatedPages = 0,
+                        ),
+                    )
+                }
+                translationQueue.clear()
+
+                // Cancel current translation if active
+                if (currentTranslationJob?.isActive == true) {
+                    currentTranslationJob?.cancel()
+                    isTranslating = false
+                    notifier.dismissProgress()
+
+                    // Update current translating chapter state
+                    val currentChapterId = _chapterTranslationStates.value.entries
+                        .find { it.value.state == ChapterTranslationState.State.TRANSLATING }
+                        ?.key
+                    if (currentChapterId != null) {
+                        updateChapterState(
+                            ChapterTranslationState(
+                                chapterId = currentChapterId,
+                                state = ChapterTranslationState.State.NOT_TRANSLATED,
+                                progress = 0,
+                                totalPages = 0,
+                                translatedPages = 0,
+                            ),
+                        )
+                    }
+                }
+
+                logcat { "Translation queue cleared" }
+            }
+        }
     }
 
     /**
      * Delete translated chapter.
      */
     fun deleteTranslation(chapterId: Long) {
-        cancelTranslation(chapterId)
+        scope.launch {
+            queueMutex.withLock {
+                // Remove from queue if present
+                translationQueue.removeAll { it.chapter.id == chapterId }
+
+                // Cancel current job if it's for this chapter
+                if (currentTranslationJob?.isActive == true) {
+                    val currentChapterId = _chapterTranslationStates.value.entries
+                        .find { it.value.state == ChapterTranslationState.State.TRANSLATING }
+                        ?.key
+                    if (currentChapterId == chapterId) {
+                        currentTranslationJob?.cancel()
+                        isTranslating = false
+                        notifier.dismissProgress()
+                    }
+                }
+            }
+
+            updateChapterState(
+                ChapterTranslationState(
+                    chapterId = chapterId,
+                    state = ChapterTranslationState.State.NOT_TRANSLATED,
+                    progress = 0,
+                    totalPages = 0,
+                    translatedPages = 0,
+                ),
+            )
+        }
         // TODO: Delete cached translations for this chapter
-        updateChapterState(
-            ChapterTranslationState(
-                chapterId = chapterId,
-                state = ChapterTranslationState.State.NOT_TRANSLATED,
-                progress = 0,
-                totalPages = 0,
-                translatedPages = 0,
-            ),
-        )
     }
 
     /**
@@ -171,16 +318,6 @@ class TranslationPreFetchManager(
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuLlmModel().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
-
-        updateChapterState(
-            ChapterTranslationState(
-                chapterId = chapterId,
-                state = ChapterTranslationState.State.TRANSLATING,
-                progress = 0,
-                totalPages = pages.size,
-                translatedPages = 0,
-            ),
-        )
 
         var translatedCount = 0
 
@@ -215,6 +352,7 @@ class TranslationPreFetchManager(
                     if (cached != null) {
                         translatedCount++
                         updateProgress(chapterId, translatedCount, pages.size)
+                        notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
                         continue
                     }
 
@@ -243,6 +381,7 @@ class TranslationPreFetchManager(
                         )
                         translatedCount++
                         updateProgress(chapterId, translatedCount, pages.size)
+                        notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
                     } else {
                         throw Exception("Translation failed for page ${index + 1}")
                     }
@@ -259,8 +398,10 @@ class TranslationPreFetchManager(
                     translatedPages = pages.size,
                 ),
             )
+            notifier.dismissProgress()
         } catch (e: CancellationException) {
             logcat { "Translation cancelled for chapter $chapterId" }
+            notifier.dismissProgress()
             throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR) { "Translation failed for chapter $chapterId: ${e.message}" }
@@ -273,8 +414,11 @@ class TranslationPreFetchManager(
                     translatedPages = translatedCount,
                 ),
             )
-        } finally {
-            translationJobs.remove(chapterId)
+            notifier.onError(
+                mangaTitle = manga.title,
+                chapterName = chapter.name,
+                error = e.message,
+            )
         }
     }
 
@@ -316,8 +460,14 @@ class TranslationPreFetchManager(
     }
 
     fun destroy() {
-        translationJobs.values.forEach { it.cancel() }
-        translationJobs.clear()
+        scope.launch {
+            queueMutex.withLock {
+                currentTranslationJob?.cancel()
+                translationQueue.clear()
+                isTranslating = false
+                notifier.dismissProgress()
+            }
+        }
         scope.cancel()
     }
 }

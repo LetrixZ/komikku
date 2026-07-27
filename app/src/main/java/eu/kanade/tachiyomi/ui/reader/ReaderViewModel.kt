@@ -430,6 +430,8 @@ class ReaderViewModel @JvmOverloads constructor(
 
         if (newState) {
             translationManager.enableTranslation()
+            // Clear any pending pre-translations to avoid conflicts with Koharu's single project limitation
+            Injekt.get<eu.kanade.domain.koharu.TranslationPreFetchManager>().clearQueue()
             // Queue current chapter pages for translation
             val currentChapter = state.value.currentChapter ?: return
             queueChapterForTranslation(currentChapter)
@@ -482,18 +484,20 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Update a page to use the translated image.
+     * Update a page to use the translated image and refresh the viewer.
      */
     private fun updatePageWithTranslation(page: ReaderPage, translatedFile: java.io.File) {
         page.stream = { translatedFile.inputStream() }
         // Trigger UI update if page is currently visible
         viewModelScope.launch {
             page.status = Page.State.Ready
+            // Force viewer to refresh the page
+            refreshCurrentViewer()
         }
     }
 
     /**
-     * Restore all pages to use original images.
+     * Restore all pages to use original images and refresh the viewer.
      */
     private fun restoreOriginalImages() {
         val currentChapter = state.value.currentChapter ?: return
@@ -512,7 +516,39 @@ class ReaderViewModel @JvmOverloads constructor(
 
             withUIContext {
                 mutableState.update { it.copy(translationState = emptyMap()) }
+                // Force viewer to refresh after restoring original images
+                refreshCurrentViewer()
             }
+        }
+    }
+
+    /**
+     * Force the current viewer to refresh and reload visible pages.
+     */
+    private fun refreshCurrentViewer() {
+        val viewer = state.value.viewer ?: return
+        viewModelScope.launch {
+            when (viewer) {
+                is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
+                    viewer.refreshPages()
+                }
+                is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
+                    viewer.refreshPages()
+                }
+            }
+        }
+    }
+
+    /**
+     * Refresh the viewer when translation state changes.
+     * This forces all visible pages to reload with the current stream.
+     */
+    private fun refreshViewerForTranslation() {
+        val viewer = state.value.viewer ?: return
+        // Force refresh by re-setting the current chapters
+        val viewerChapters = state.value.viewerChapters ?: return
+        viewModelScope.launch {
+            viewer.setChapters(viewerChapters)
         }
     }
     // KMK <--

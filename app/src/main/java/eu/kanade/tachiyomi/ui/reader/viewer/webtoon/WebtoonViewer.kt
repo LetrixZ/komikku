@@ -85,6 +85,25 @@ class WebtoonViewer(
     )
 
     /**
+     * Refresh the adapter to reload visible pages.
+     */
+    fun refreshPages() {
+        // Force refresh by temporarily clearing and resetting the adapter
+        val layoutManager = recycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager
+        val firstVisiblePosition = layoutManager?.findFirstVisibleItemPosition() ?: 0
+        val currentItems = adapter.items.toList()
+
+        // Clear and reset to force view recreation
+        adapter.updateItems(emptyList())
+
+        // Restore items
+        adapter.updateItems(currentItems)
+
+        // Restore position
+        recycler.scrollToPosition(firstVisiblePosition)
+    }
+
+    /**
      * Currently active item. It can be a chapter page or a chapter transition.
      */
     /* [EXH] private */

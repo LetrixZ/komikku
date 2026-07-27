@@ -74,7 +74,7 @@ class WebtoonAdapter(
         updateItems(newItems)
     }
 
-    private fun updateItems(newItems: List<Any>) {
+    internal fun updateItems(newItems: List<Any>) {
         val result = DiffUtil.calculateDiff(Callback(items, newItems))
         items = newItems
         result.dispatchUpdatesTo(this)
