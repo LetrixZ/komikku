@@ -53,6 +53,11 @@ class StorageManager(
                     parent.createDirectory(AUTOMATIC_BACKUPS_PATH)
                     parent.createDirectory(LOCAL_SOURCE_PATH)
                     parent.createDirectory(DOWNLOADS_PATH).also {
+                        parent.createDirectory(TRANSLATIONS_PATH)
+                            ?.createDirectory(KOHARU_TRANSLATIONS_PATH)
+                            ?.let { koharuDir ->
+                                DiskUtil.createNoMediaFile(koharuDir, context)
+                            }
                         DiskUtil.createNoMediaFile(it, context)
                     }
                 }
@@ -87,6 +92,14 @@ class StorageManager(
         return baseDir?.createDirectory(LOGS_PATH)
     }
     // SY <--
+
+    // KMK -->
+    fun getTranslationsDirectory(): UniFile? {
+        return baseDir
+            ?.createDirectory(TRANSLATIONS_PATH)
+            ?.createDirectory(KOHARU_TRANSLATIONS_PATH)
+    }
+    // KMK <--
 
     companion object {
         // KMK -->
@@ -226,3 +239,8 @@ private const val LOCAL_SOURCE_PATH = "local"
 // SY -->
 private const val LOGS_PATH = "logs"
 // SY <--
+
+// KMK -->
+private const val TRANSLATIONS_PATH = "translations"
+private const val KOHARU_TRANSLATIONS_PATH = "koharu"
+// KMK <--

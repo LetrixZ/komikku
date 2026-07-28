@@ -1,11 +1,8 @@
 package eu.kanade.presentation.more.settings.screen
 
 import android.content.Context
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -16,11 +13,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import eu.kanade.domain.koharu.KoharuClient
 import eu.kanade.domain.koharu.KoharuPreferences
-import eu.kanade.domain.koharu.TranslationCache
+import eu.kanade.domain.koharu.TranslationStorage
 import eu.kanade.presentation.more.settings.Preference
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -31,9 +28,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-object SettingsKoharuScreen : SearchableSettings {
+object SettingsTranslationScreen : SearchableSettings {
     @Suppress("unused")
-    private fun readResolve(): Any = SettingsKoharuScreen
+    private fun readResolve(): Any = SettingsTranslationScreen
 
     @ReadOnlyComposable
     @Composable
@@ -46,9 +43,11 @@ object SettingsKoharuScreen : SearchableSettings {
     @Composable
     override fun getPreferences(): List<Preference> {
         val context = LocalContext.current
+        val uriHandler = LocalUriHandler.current
+
         val koharuPreferences = remember { Injekt.get<KoharuPreferences>() }
         val koharuClient = remember { Injekt.get<KoharuClient>() }
-        val translationCache = remember { Injekt.get<TranslationCache>() }
+        val translationStorage = remember { Injekt.get<TranslationStorage>() }
         val scope = rememberCoroutineScope()
 
         val serverUrlPref = koharuPreferences.koharuServerUrl()
@@ -62,7 +61,7 @@ object SettingsKoharuScreen : SearchableSettings {
         var availableModels by remember { mutableStateOf<List<KoharuClient.LocalModel>>(emptyList()) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
         var showClearCacheDialog by remember { mutableStateOf(false) }
-        var cacheSize by remember { mutableStateOf(translationCache.getCacheSizeFormatted()) }
+        var storageSize by remember { mutableStateOf(translationStorage.getTotalSizeFormatted()) }
 
         // Fetch models when entering the screen
         remember {
@@ -100,7 +99,11 @@ object SettingsKoharuScreen : SearchableSettings {
                     Preference.PreferenceItem.EditTextPreference(
                         preference = serverUrlPref,
                         title = stringResource(KMR.strings.pref_koharu_server_url),
-                        subtitle = stringResource(KMR.strings.pref_koharu_server_url_summary),
+                        subtitle = if (serverUrl.isEmpty()) {
+                            stringResource(KMR.strings.pref_koharu_server_url_summary)
+                        } else {
+                            "%s"
+                        },
                     ),
                     Preference.PreferenceItem.ListPreference(
                         preference = llmModelPref,
@@ -128,8 +131,16 @@ object SettingsKoharuScreen : SearchableSettings {
                     ),
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(KMR.strings.pref_koharu_clear_cache),
-                        subtitle = stringResource(KMR.strings.pref_koharu_clear_cache_summary, cacheSize),
+                        subtitle = stringResource(KMR.strings.pref_koharu_clear_cache_summary, storageSize),
                         onClick = { showClearCacheDialog = true },
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(KMR.strings.pref_koharu_about),
+                        onClick = {
+                            uriHandler.openUri(
+                                "https://koharu.rs",
+                            )
+                        },
                     ),
                 ),
             ),
@@ -137,10 +148,10 @@ object SettingsKoharuScreen : SearchableSettings {
             if (showClearCacheDialog) {
                 ClearCacheDialog(
                     context = context,
-                    translationCache = translationCache,
+                    translationStorage = translationStorage,
                     onDismiss = { showClearCacheDialog = false },
                     onCacheCleared = {
-                        cacheSize = translationCache.getCacheSizeFormatted()
+                        storageSize = translationStorage.getTotalSizeFormatted()
                     },
                 )
             }
@@ -151,7 +162,7 @@ object SettingsKoharuScreen : SearchableSettings {
 @Composable
 private fun ClearCacheDialog(
     context: Context,
-    translationCache: TranslationCache,
+    translationStorage: TranslationStorage,
     onDismiss: () -> Unit,
     onCacheCleared: () -> Unit,
 ) {
@@ -170,7 +181,7 @@ private fun ClearCacheDialog(
             TextButton(
                 onClick = {
                     scope.launch {
-                        translationCache.clearCache()
+                        translationStorage.clearAll()
                         onCacheCleared()
                         onDismiss()
                         android.widget.Toast.makeText(

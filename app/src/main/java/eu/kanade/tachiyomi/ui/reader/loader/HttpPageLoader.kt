@@ -210,6 +210,11 @@ internal class HttpPageLoader(
      * @param page the page whose source image has to be downloaded.
      */
     private suspend fun internalLoadPage(page: ReaderPage) {
+        // If showing translated images, don't overwrite the stream
+        if (page.chapter.useTranslatedImages) {
+            page.status = Page.State.Ready
+            return
+        }
         try {
             if (page.imageUrl.isNullOrEmpty()) {
                 page.status = Page.State.LoadPage

@@ -22,6 +22,8 @@ data class ReaderChapter(val chapter: Chapter) {
 
     var requestedPage: Int = 0
 
+    var useTranslatedImages: Boolean = false
+
     private var references = 0
 
     constructor(chapter: tachiyomi.domain.chapter.model.Chapter) : this(chapter.toDbChapter())

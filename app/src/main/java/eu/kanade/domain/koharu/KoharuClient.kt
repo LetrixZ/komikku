@@ -1,11 +1,7 @@
 package eu.kanade.domain.koharu
 
-import android.content.Context
 import eu.kanade.tachiyomi.network.NetworkHelper
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
@@ -20,6 +16,7 @@ import uy.kohesive.injekt.api.get
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Client for Koharu manga translation service API.
@@ -117,11 +114,6 @@ class KoharuClient(
         val kind: String,
         val status: String,
         val error: String? = null,
-    )
-
-    @Serializable
-    data class ExportRequest(
-        val format: String,
     )
 
     /**
@@ -325,7 +317,7 @@ class KoharuClient(
                 logcat { "LLM error: ${state.target?.modelId}" }
                 return@withIOContext false
             }
-            delay(500)
+            delay(500.milliseconds)
         }
         false
     }
@@ -411,12 +403,13 @@ class KoharuClient(
                     logcat { "Pipeline completed with errors: ${operation.error}" }
                     return@withIOContext false
                 }
+
                 "failed" -> {
                     logcat { "Pipeline failed: ${operation.error}" }
                     return@withIOContext false
                 }
             }
-            delay(1000)
+            delay(1000.milliseconds)
         }
         false
     }
@@ -427,7 +420,7 @@ class KoharuClient(
      * @param outputFile The file to save the exported image to
      * @return True if export succeeded, false otherwise
      */
-    suspend fun exportTranslatedImage(serverUrl: String, outputFile: File): Boolean = withIOContext {
+    suspend fun exportTranslatedImage(serverUrl: String, outputFile: File, retry: Boolean): Boolean = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/projects/current/export"
         val body = """{"format":"rendered"}"""
         val request = Request.Builder()
@@ -436,10 +429,10 @@ class KoharuClient(
             .build()
 
         networkHelper.client.newCall(request).execute().use { response ->
-            if (response.code == 400) {
+            if (retry && response.code == 400) {
                 // Retry after 1 second
-                delay(1000)
-                return@withIOContext exportTranslatedImage(serverUrl, outputFile)
+                delay(1000.milliseconds)
+                return@withIOContext exportTranslatedImage(serverUrl, outputFile, true)
             }
             if (!response.isSuccessful) {
                 logcat { "Failed to export image: ${response.code}" }
@@ -472,8 +465,9 @@ class KoharuClient(
         imageStream: () -> InputStream,
         outputFile: File,
         modelId: String,
+        targetLanguage: String,
     ): Boolean = withIOContext {
-        val projectId = "$chapterId-$pageIndex"
+        val projectId = "$chapterId-$pageIndex-$modelId-$targetLanguage"
 
         try {
             // Step 0: Check if project exists
@@ -487,8 +481,15 @@ class KoharuClient(
                 if (!hasPages) {
                     // No pages, add the page
                     addPage(serverUrl, imageStream)
+                } else {
+                    // If it has pages, try exporting image
+                    try {
+                        if (exportTranslatedImage(serverUrl, outputFile, false)) {
+                            return@withIOContext true
+                        }
+                    } catch (_: Exception) {
+                    }
                 }
-                // If has pages, skip to LLM loading
             } else {
                 // Step 1: Create new project
                 createProject(serverUrl, projectId)
@@ -518,7 +519,7 @@ class KoharuClient(
             }
 
             // Step 6: Export translated image
-            if (!exportTranslatedImage(serverUrl, outputFile)) {
+            if (!exportTranslatedImage(serverUrl, outputFile, true)) {
                 logcat { "Failed to export translated image" }
                 return@withIOContext false
             }

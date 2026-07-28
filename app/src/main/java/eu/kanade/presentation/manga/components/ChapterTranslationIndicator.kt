@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
@@ -28,9 +29,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.koharu.TranslationPreFetchManager
+import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.tachiyomi.R
+import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
 import tachiyomi.presentation.core.i18n.stringResource
@@ -97,7 +102,7 @@ private fun NotTranslatedIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Outlined.Translate,
+            painter = painterResource(R.drawable.ic_translate_circle),
             contentDescription = stringResource(KMR.strings.action_translate_chapter),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.primary,
@@ -160,7 +165,7 @@ private fun TranslatingIndicator(
         }
 
         Icon(
-            imageVector = Icons.Outlined.Translate,
+            painter = painterResource(R.drawable.ic_translate),
             contentDescription = null,
             modifier = ArrowModifier,
             tint = arrowColor,
@@ -174,23 +179,33 @@ private fun TranslatedIndicator(
     modifier: Modifier = Modifier,
     onClick: (ChapterTranslationAction) -> Unit,
 ) {
+    var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
             .size(IconButtonTokens.StateLayerSize)
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                onLongClick = { onClick(ChapterTranslationAction.DELETE) },
-                onClick = { onClick(ChapterTranslationAction.DELETE) },
+                onLongClick = { isMenuExpanded = true },
+                onClick = { isMenuExpanded = true },
             ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Filled.CheckCircle,
+            painter = painterResource(R.drawable.ic_translate_circle_filled),
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.primary,
         )
+        DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text(text = stringResource(MR.strings.action_delete)) },
+                onClick = {
+                    onClick(ChapterTranslationAction.DELETE)
+                    isMenuExpanded = false
+                },
+            )
+        }
     }
 }
 

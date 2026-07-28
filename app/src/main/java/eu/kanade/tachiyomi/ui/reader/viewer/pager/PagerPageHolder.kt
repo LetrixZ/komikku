@@ -119,9 +119,14 @@ class PagerPageHolder(
         page ?: return
         // SY <--
         val loader = page.chapter.pageLoader ?: return
+
         supervisorScope {
-            launchIO {
-                loader.loadPage(page)
+            val shouldSkip = page.chapter.useTranslatedImages && page.status == Page.State.Ready && page.stream != null
+
+            if (!shouldSkip) {
+                launchIO {
+                    loader.loadPage(page)
+                }
             }
             page.statusFlow.collectLatest { state ->
                 when (state) {
@@ -133,7 +138,9 @@ class PagerPageHolder(
                             progressIndicator?.setProgress(value)
                         }
                     }
-                    Page.State.Ready -> setImage()
+                    Page.State.Ready -> {
+                        setImage()
+                    }
                     is Page.State.Error -> setError(state.error)
                 }
             }

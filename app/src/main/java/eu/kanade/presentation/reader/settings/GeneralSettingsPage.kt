@@ -5,11 +5,13 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.SettingsChipRow
@@ -156,4 +158,14 @@ internal fun GeneralPage(screenModel: ReaderSettingsScreenModel) {
         pref = screenModel.preferences.useAutoWebtoon(),
     )
     // SY <--
+
+    // KMK -->
+    // Show translated images toggle (only if translation is configured)
+    val showTranslated by screenModel.showTranslatedFlow.collectAsState()
+    CheckboxItem(
+        label = stringResource(KMR.strings.action_show_translated),
+        checked = showTranslated,
+        onClick = { screenModel.onToggleShowTranslated() },
+    )
+    // KMK <--
 }

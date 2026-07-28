@@ -29,6 +29,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.storage.service.StorageManager
+import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
@@ -37,12 +39,12 @@ import java.io.File
 /**
  * Manager for pre-translating chapters before reading.
  * This allows users to queue entire chapters for translation.
+ * Users must download the chapter first before translating.
  */
 class TranslationPreFetchManager(
-    private val translationManager: TranslationManager,
     private val koharuClient: KoharuClient,
     private val koharuPreferences: KoharuPreferences,
-    private val translationCache: TranslationCache,
+    private val translationStorage: TranslationStorage,
     private val downloadManager: DownloadManager = Injekt.get(),
     private val downloadProvider: DownloadProvider = Injekt.get(),
 ) {
@@ -86,10 +88,20 @@ class TranslationPreFetchManager(
     }
 
     /**
+     * Check if Koharu is properly configured.
+     */
+    fun isConfigured(): Boolean {
+        val serverUrl = koharuPreferences.koharuServerUrl().get()
+        val model = koharuPreferences.koharuLlmModel().get()
+        val language = koharuPreferences.koharuTargetLanguage().get()
+        return serverUrl.isNotBlank() && model.isNotBlank() && language.isNotBlank()
+    }
+
+    /**
      * Start pre-translating a chapter. If another translation is in progress, it will be queued.
      */
-    fun startTranslation(manga: Manga, chapter: Chapter, pages: List<Page>) {
-        if (!translationManager.isConfigured()) {
+    fun startTranslation(manga: Manga, chapter: Chapter) {
+        if (!isConfigured()) {
             logcat(LogPriority.ERROR) { "Koharu not configured, cannot start translation" }
             return
         }
@@ -111,7 +123,7 @@ class TranslationPreFetchManager(
                 chapterId = chapterId,
                 state = ChapterTranslationState.State.QUEUED,
                 progress = 0,
-                totalPages = pages.size,
+                totalPages = 0,
                 translatedPages = 0,
             ),
         )
@@ -119,7 +131,7 @@ class TranslationPreFetchManager(
         // Add to queue
         scope.launch {
             queueMutex.withLock {
-                translationQueue.add(TranslationRequest(manga, chapter, pages))
+                translationQueue.add(TranslationRequest(manga, chapter, emptyList()))
                 logcat { "Queued translation for chapter $chapterId" }
             }
             processQueue()
@@ -153,7 +165,7 @@ class TranslationPreFetchManager(
 
                 currentTranslationJob = scope.launch {
                     try {
-                        translateChapter(request.manga, request.chapter, request.pages)
+                        translateChapter(request.manga, request.chapter)
                     } catch (e: Exception) {
                         logcat(LogPriority.ERROR, e) { "Translation failed for chapter $chapterId" }
                         notifier.onError(
@@ -210,7 +222,6 @@ class TranslationPreFetchManager(
 
     /**
      * Clear all pending translations in the queue.
-     * Called when entering the reader to prevent conflicts with in-reader translation.
      */
     fun clearQueue() {
         scope.launch {
@@ -259,20 +270,20 @@ class TranslationPreFetchManager(
     }
 
     /**
-     * Delete translated chapter.
+     * Delete translated chapter - removes all stored translated images from persistent storage.
      */
-    fun deleteTranslation(chapterId: Long) {
+    fun deleteTranslation(chapter: Chapter, manga: Manga) {
         scope.launch {
             queueMutex.withLock {
                 // Remove from queue if present
-                translationQueue.removeAll { it.chapter.id == chapterId }
+                translationQueue.removeAll { it.chapter.id == chapter.id }
 
                 // Cancel current job if it's for this chapter
                 if (currentTranslationJob?.isActive == true) {
                     val currentChapterId = _chapterTranslationStates.value.entries
                         .find { it.value.state == ChapterTranslationState.State.TRANSLATING }
                         ?.key
-                    if (currentChapterId == chapterId) {
+                    if (currentChapterId == chapter.id) {
                         currentTranslationJob?.cancel()
                         isTranslating = false
                         notifier.dismissProgress()
@@ -280,24 +291,64 @@ class TranslationPreFetchManager(
                 }
             }
 
+            // Actually delete the stored translation files
+            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+            translationStorage.deleteChapterTranslation(
+                source = source,
+                mangaTitle = manga.title,
+                chapterName = chapter.name,
+                chapterScanlator = chapter.scanlator,
+            )
+
             updateChapterState(
                 ChapterTranslationState(
-                    chapterId = chapterId,
+                    chapterId = chapter.id,
                     state = ChapterTranslationState.State.NOT_TRANSLATED,
                     progress = 0,
                     totalPages = 0,
                     translatedPages = 0,
                 ),
             )
+            logcat { "Deleted translation for chapter ${chapter.id}" }
         }
-        // TODO: Delete cached translations for this chapter
     }
 
     /**
      * Get translation state for a chapter.
+     * If no runtime state exists, checks persistent storage.
      */
-    fun getChapterState(chapterId: Long): ChapterTranslationState {
-        return _chapterTranslationStates.value[chapterId] ?: ChapterTranslationState(
+    fun getChapterState(chapterId: Long, manga: Manga? = null, chapter: Chapter? = null): ChapterTranslationState {
+        // Check runtime state first
+        val runtimeState = _chapterTranslationStates.value[chapterId]
+        if (runtimeState != null) return runtimeState
+
+        // Check persistent storage if manga/chapter info is available
+        if (manga != null && chapter != null) {
+            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+            val isTranslated = translationStorage.isChapterTranslated(
+                source = source,
+                mangaTitle = manga.title,
+                chapterName = chapter.name,
+                chapterScanlator = chapter.scanlator,
+            )
+            if (isTranslated) {
+                val totalPages = translationStorage.getTranslatedPageCount(
+                    source = source,
+                    mangaTitle = manga.title,
+                    chapterName = chapter.name,
+                    chapterScanlator = chapter.scanlator,
+                )
+                return ChapterTranslationState(
+                    chapterId = chapterId,
+                    state = ChapterTranslationState.State.TRANSLATED,
+                    progress = 100,
+                    totalPages = totalPages,
+                    translatedPages = totalPages,
+                )
+            }
+        }
+
+        return ChapterTranslationState(
             chapterId = chapterId,
             state = ChapterTranslationState.State.NOT_TRANSLATED,
             progress = 0,
@@ -307,49 +358,86 @@ class TranslationPreFetchManager(
     }
 
     /**
-     * Check if a chapter is fully translated.
+     * Check if a chapter is fully translated (including persistent storage).
      */
-    fun isChapterTranslated(chapterId: Long): Boolean {
-        return _chapterTranslationStates.value[chapterId]?.state == ChapterTranslationState.State.TRANSLATED
+    fun isChapterTranslated(chapterId: Long, manga: Manga? = null, chapter: Chapter? = null): Boolean {
+        return getChapterState(chapterId, manga, chapter).state == ChapterTranslationState.State.TRANSLATED
     }
 
-    private suspend fun translateChapter(manga: Manga, chapter: Chapter, pages: List<Page>) {
-        val chapterId = chapter.id ?: return
+    /**
+     * Check if a chapter has translated images stored persistently.
+     */
+    fun hasStoredTranslation(manga: Manga, chapter: Chapter): Boolean {
+        val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+        return translationStorage.isChapterTranslated(
+            source = source,
+            mangaTitle = manga.title,
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+        )
+    }
+
+    /**
+     * Get the translated page file for a specific page from persistent storage.
+     */
+    fun getTranslatedPageFile(manga: Manga, chapter: Chapter, pageIndex: Int): UniFile? {
+        val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+        val result = translationStorage.getTranslatedPageFile(
+            source = source,
+            mangaTitle = manga.title,
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+            pageIndex = pageIndex,
+        )
+        return result
+    }
+
+    private suspend fun translateChapter(manga: Manga, chapter: Chapter) {
+        val chapterId = chapter.id
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuLlmModel().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
 
         var translatedCount = 0
+        var pages: List<ReaderPage> = emptyList()
 
         try {
             withIOContext {
                 // Get the manga and source to locate downloaded files
                 val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
-                val chapterPath = downloadProvider.findChapterDir(
-                    chapter.name,
-                    chapter.scanlator,
-                    chapter.url,
-                    manga.ogTitle,
-                    source,
-                )
-
-                val pages = if (chapterPath?.isFile == true) {
-                    getPagesFromArchive(chapterPath)
+                // KMK -->
+                pages = if (source.isLocal()) {
+                    // For Local source, load pages directly from local files
+                    getPagesFromLocalSource(manga, chapter)
                 } else {
-                    getPagesFromDirectory(source, manga, chapter)
-                }
-
-                for ((index, page) in pages.withIndex()) {
-                    // Check if already cached
-                    val cached = translationCache.getCachedTranslation(
-                        chapterId = chapterId,
-                        pageIndex = index,
-                        modelId = model,
-                        targetLanguage = language,
+                    val chapterPath = downloadProvider.findChapterDir(
+                        chapter.name,
+                        chapter.scanlator,
+                        chapter.url,
+                        manga.ogTitle,
+                        source,
                     )
 
-                    if (cached != null) {
+                    if (chapterPath?.isFile == true) {
+                        getPagesFromArchive(chapterPath)
+                    } else {
+                        getPagesFromDirectory(source, manga, chapter)
+                    }
+                }
+                // KMK <--
+
+                for ((index, page) in pages.withIndex()) {
+                    // Check if already translated and stored persistently
+                    val existingFile = translationStorage.getTranslatedPageFile(
+                        source = source,
+                        mangaTitle = manga.title,
+                        chapterName = chapter.name,
+                        chapterScanlator = chapter.scanlator,
+                        pageIndex = index,
+                    )
+
+                    if (existingFile != null && existingFile.exists()) {
                         translatedCount++
                         updateProgress(chapterId, translatedCount, pages.size)
                         notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
@@ -368,17 +456,20 @@ class TranslationPreFetchManager(
                         imageStream = imageStream,
                         outputFile = outputFile,
                         modelId = model,
+                        targetLanguage = language,
                     )
 
                     if (success && outputFile.exists()) {
-                        // Cache the translated image
-                        translationCache.cacheTranslation(
-                            chapterId = chapterId,
+                        // Save to persistent storage
+                        translationStorage.saveTranslatedPage(
+                            source = source,
+                            mangaTitle = manga.title,
+                            chapterName = chapter.name,
+                            chapterScanlator = chapter.scanlator,
                             pageIndex = index,
-                            modelId = model,
-                            targetLanguage = language,
                             imageFile = outputFile,
                         )
+                        outputFile.delete() // Clean up temp file
                         translatedCount++
                         updateProgress(chapterId, translatedCount, pages.size)
                         notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
@@ -409,7 +500,7 @@ class TranslationPreFetchManager(
                 ChapterTranslationState(
                     chapterId = chapterId,
                     state = ChapterTranslationState.State.ERROR,
-                    progress = (translatedCount * 100) / pages.size,
+                    progress = if (pages.isNotEmpty()) (translatedCount * 100) / pages.size else 0,
                     totalPages = pages.size,
                     translatedPages = translatedCount,
                 ),
@@ -442,6 +533,58 @@ class TranslationPreFetchManager(
         }
     }
 
+    // KMK -->
+    /**
+     * Load pages from Local source chapter files.
+     */
+    private suspend fun getPagesFromLocalSource(manga: Manga, chapter: Chapter): List<ReaderPage> {
+        val storageManager = Injekt.get<StorageManager>()
+        val localSourceDir = storageManager.getLocalSourceDirectory()
+            ?: throw Exception("Local source directory not configured")
+
+        // chapter.url is like "MangaName/Chapter_01.cbz" or "MangaName/Chapter_01/"
+        val parts = chapter.url.split('/', limit = 2)
+        if (parts.size < 2) throw Exception("Invalid chapter URL: ${chapter.url}")
+
+        val mangaDir = localSourceDir.findFile(parts[0])
+            ?: throw Exception("Manga directory not found: ${parts[0]}")
+        val chapterFile = mangaDir.findFile(parts[1])
+            ?: throw Exception("Chapter file not found: ${parts[1]}")
+
+        return if (chapterFile.isFile) {
+            getPagesFromArchive(chapterFile)
+        } else {
+            getPagesFromLocalDirectory(chapterFile)
+        }
+    }
+
+    /**
+     * Load pages from a local directory of image files.
+     */
+    private fun getPagesFromLocalDirectory(dir: UniFile): List<ReaderPage> {
+        val imageFiles = dir.listFiles()
+            ?.filter { it.isFile && isImageFile(it.name ?: "") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+
+        return imageFiles.mapIndexed { index, file ->
+            ReaderPage(index, url = "", imageUrl = null) {
+                file.openInputStream()
+            }.apply {
+                status = Page.State.Ready
+            }
+        }
+    }
+
+    /**
+     * Check if a filename is an image file.
+     */
+    private fun isImageFile(filename: String): Boolean {
+        val ext = filename.substringAfterLast('.', "").lowercase()
+        return ext in listOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+    }
+    // KMK <--
+
     private fun updateProgress(chapterId: Long, translatedPages: Int, totalPages: Int) {
         val progress = if (totalPages > 0) (translatedPages * 100) / totalPages else 0
         updateChapterState(
@@ -457,6 +600,44 @@ class TranslationPreFetchManager(
 
     private fun updateChapterState(state: ChapterTranslationState) {
         _chapterTranslationStates.value += (state.chapterId to state)
+    }
+
+    /**
+     * Update the state for a chapter based on persistent storage.
+     * Called when checking if translation files exist on disk.
+     */
+    fun refreshChapterStateFromStorage(manga: Manga, chapter: Chapter) {
+        val chapterId = chapter.id ?: return
+        val runtimeState = _chapterTranslationStates.value[chapterId]
+        // Don't override running states
+        if (runtimeState != null && runtimeState.state != ChapterTranslationState.State.NOT_TRANSLATED) {
+            return
+        }
+
+        val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+        val isTranslated = translationStorage.isChapterTranslated(
+            source = source,
+            mangaTitle = manga.title,
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+        )
+        if (isTranslated) {
+            val totalPages = translationStorage.getTranslatedPageCount(
+                source = source,
+                mangaTitle = manga.title,
+                chapterName = chapter.name,
+                chapterScanlator = chapter.scanlator,
+            )
+            updateChapterState(
+                ChapterTranslationState(
+                    chapterId = chapterId,
+                    state = ChapterTranslationState.State.TRANSLATED,
+                    progress = 100,
+                    totalPages = totalPages,
+                    translatedPages = totalPages,
+                ),
+            )
+        }
     }
 
     fun destroy() {

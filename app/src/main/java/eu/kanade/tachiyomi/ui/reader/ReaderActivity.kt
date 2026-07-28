@@ -310,8 +310,8 @@ class ReaderActivity : BaseActivity() {
                         onSetAsCoverResult(event.result)
                     }
                     // KMK -->
-                    ReaderViewModel.Event.TranslationNotConfigured -> {
-                        toast(tachiyomi.i18n.kmk.KMR.strings.translation_not_configured)
+                    ReaderViewModel.Event.TranslationNotAvailable -> {
+                        toast(tachiyomi.i18n.kmk.KMR.strings.translation_not_available)
                     }
                     // KMK <--
                 }
@@ -336,6 +336,7 @@ class ReaderActivity : BaseActivity() {
                     readerState = viewModel.state,
                     onChangeReadingMode = viewModel::setMangaReadingMode,
                     onChangeOrientation = viewModel::setMangaOrientationType,
+                    onToggleShowTranslated = viewModel::toggleShowTranslated,
                 )
             }
 
@@ -762,10 +763,6 @@ class ReaderActivity : BaseActivity() {
             },
             onClickShiftPage = ::shiftDoublePages,
             // SY <--
-            // KMK -->
-            translationEnabled = state.translationEnabled,
-            onClickTranslation = viewModel::toggleTranslation,
-            // KMK <--
         )
     }
 

@@ -99,10 +99,7 @@ fun ReaderAppBars(
     onClickPageLayout: () -> Unit,
     onClickShiftPage: () -> Unit,
     // SY <--
-    // KMK -->
-    translationEnabled: Boolean,
-    onClickTranslation: () -> Unit,
-    // KMK <--
+
 ) {
     val isRtl = viewer is R2LPagerViewer
     val backgroundColor = MaterialTheme.colorScheme
@@ -279,10 +276,7 @@ fun ReaderAppBars(
                     onClickPageLayout = onClickPageLayout,
                     onClickShiftPage = onClickShiftPage,
                     // SY <--
-                    // KMK -->
-                    translationEnabled = translationEnabled,
-                    onClickTranslation = onClickTranslation,
-                    // KMK <--
+
                 )
             }
         }

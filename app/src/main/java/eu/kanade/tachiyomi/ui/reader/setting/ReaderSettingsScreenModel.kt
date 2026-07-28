@@ -15,6 +15,7 @@ class ReaderSettingsScreenModel(
     readerState: StateFlow<ReaderViewModel.State>,
     val onChangeReadingMode: (ReadingMode) -> Unit,
     val onChangeOrientation: (ReaderOrientation) -> Unit,
+    val onToggleShowTranslated: () -> Unit,
     val preferences: ReaderPreferences = Injekt.get(),
 ) : ScreenModel {
 
@@ -27,4 +28,9 @@ class ReaderSettingsScreenModel(
         .map { it.manga }
         .distinctUntilChanged()
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, null)
+
+    val showTranslatedFlow = readerState
+        .map { it.showTranslated }
+        .distinctUntilChanged()
+        .stateIn(ioCoroutineScope, SharingStarted.Lazily, false)
 }

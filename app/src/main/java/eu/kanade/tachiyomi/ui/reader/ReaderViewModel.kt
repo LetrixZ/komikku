@@ -11,7 +11,7 @@ import androidx.lifecycle.viewModelScope
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.domain.koharu.KoharuPreferences
-import eu.kanade.domain.koharu.TranslationManager
+import eu.kanade.domain.koharu.TranslationPreFetchManager
 import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
@@ -21,7 +21,6 @@ import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
-import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -47,6 +46,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.util.chapter.filterDownloaded
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
 import eu.kanade.tachiyomi.util.editCover
@@ -137,7 +137,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     // KMK -->
     private val koharuPreferences: KoharuPreferences = Injekt.get(),
-    private val translationManager: TranslationManager = Injekt.get(),
+    private val translationPreFetchManager: TranslationPreFetchManager = Injekt.get(),
     // KMK <--
     // SY -->
     private val syncPreferences: SyncPreferences = Injekt.get(),
@@ -405,121 +405,132 @@ class ReaderViewModel @JvmOverloads constructor(
                 downloadManager.addDownloadsToStartOfQueue(listOf(it))
             }
         }
-        // KMK -->
-        translationManager.onReaderClosed()
-        // KMK <--
     }
 
     // KMK -->
+    // Store original page streams so we can restore them when toggling translation off
+    private val originalPageStreams = mutableMapOf<Int, (() -> java.io.InputStream)?>()
+
     /**
-     * Toggle translation on or off for the current reading session.
+     * Toggle between showing original and translated images in the reader.
+     * Requires the chapter to have been pre-translated via the manga screen.
      */
-    fun toggleTranslation() {
-        val currentState = state.value.translationEnabled
+    fun toggleShowTranslated() {
+        val currentState = state.value.showTranslated
         val newState = !currentState
 
-        if (newState && !translationManager.isConfigured()) {
-            // Translation not configured, show error
-            viewModelScope.launch {
-                eventChannel.send(Event.TranslationNotConfigured)
+        if (newState) {
+            // Check if translation exists for current chapter
+            val currentChapter = state.value.currentChapter ?: return
+            val manga = state.value.manga ?: return
+            val domainChapter = currentChapter.chapter.toDomainChapter() ?: return
+
+            val hasTranslation = translationPreFetchManager.hasStoredTranslation(
+                manga = manga,
+                chapter = domainChapter,
+            )
+
+            if (!hasTranslation) {
+                viewModelScope.launch {
+                    eventChannel.send(Event.TranslationNotAvailable)
+                }
+                return
             }
+
+            // Update all page streams to use translated images
+            applyTranslatedImages()
+        } else {
+            // Restore original page streams
+            restoreOriginalPageStreams()
+        }
+
+        mutableState.update { it.copy(showTranslated = newState) }
+    }
+
+    /**
+     * Check if the current chapter has translations.
+     */
+    fun currentChapterHasTranslation(): Boolean {
+        val currentChapter = state.value.currentChapter ?: return false
+        val manga = state.value.manga ?: return false
+        val domainChapter = currentChapter.chapter.toDomainChapter() ?: return false
+        return translationPreFetchManager.hasStoredTranslation(
+            manga = manga,
+            chapter = domainChapter,
+        )
+    }
+
+    /**
+     * Apply translated images to all pages of the current chapter.
+     */
+    private fun applyTranslatedImages() {
+        val currentChapter = state.value.currentChapter ?: run {
+            return
+        }
+        val pages = currentChapter.pages ?: run {
+            return
+        }
+        val manga = state.value.manga ?: run {
+            return
+        }
+        val domainChapter = currentChapter.chapter.toDomainChapter() ?: run {
             return
         }
 
-        mutableState.update { it.copy(translationEnabled = newState) }
+        // Set flag before swapping streams so page holders and loaders know not to reload
+        currentChapter.useTranslatedImages = true
 
-        if (newState) {
-            translationManager.enableTranslation()
-            // Clear any pending pre-translations to avoid conflicts with Koharu's single project limitation
-            Injekt.get<eu.kanade.domain.koharu.TranslationPreFetchManager>().clearQueue()
-            // Queue current chapter pages for translation
-            val currentChapter = state.value.currentChapter ?: return
-            queueChapterForTranslation(currentChapter)
-            // Observe translation state changes
-            observeTranslationState()
-        } else {
-            translationManager.disableTranslation()
-            // Restore original images
-            restoreOriginalImages()
+        // Save original streams before overriding
+        originalPageStreams.clear()
+        for ((index, page) in pages.withIndex()) {
+            originalPageStreams[index] = page.stream
         }
-    }
 
-    /**
-     * Queue all pages of the current chapter for translation.
-     */
-    private fun queueChapterForTranslation(chapter: ReaderChapter) {
-        viewModelScope.launchIO {
-            val pages = chapter.pages ?: return@launchIO
-
-            for (page in pages) {
-                if (page.status == Page.State.Ready) {
-                    val stream = page.stream ?: continue
-                    translationManager.queuePage(chapter, page, stream)
-                }
+        for ((index, page) in pages.withIndex()) {
+            val translatedFile = translationPreFetchManager.getTranslatedPageFile(
+                manga = manga,
+                chapter = domainChapter,
+                pageIndex = index,
+            )
+            if (translatedFile != null) {
+                page.stream = { translatedFile.openInputStream() }
+                page.status = Page.State.Ready
             }
         }
+
+        // Refresh viewer to reload pages
+        refreshCurrentViewer()
     }
 
     /**
-     * Observe translation state changes and update the UI.
+     * Restore original page streams by reloading the chapter loader.
      */
-    private fun observeTranslationState() {
-        viewModelScope.launch {
-            translationManager.translationState.collect { translationStates ->
-                mutableState.update { it.copy(translationState = translationStates) }
+    private fun restoreOriginalPageStreams() {
+        val currentChapter = state.value.currentChapter ?: run {
+            return
+        }
+        val pages = currentChapter.pages ?: run {
+            return
+        }
 
-                // Check for newly translated pages and update them
-                val currentChapter = state.value.currentChapter ?: return@collect
-                val pages = currentChapter.pages ?: return@collect
+        // Clear flag before restoring streams so page holders know to reload
+        currentChapter.useTranslatedImages = false
 
-                for ((pageIndex, status) in translationStates) {
-                    if (status is TranslationManager.TranslationStatus.Success) {
-                        val page = pages.getOrNull(pageIndex) ?: continue
-                        // Update page stream to use translated image
-                        updatePageWithTranslation(page, status.translatedFile)
-                    }
-                }
+        for ((index, page) in pages.withIndex()) {
+            val originalStream = originalPageStreams[index]
+            if (originalStream != null) {
+                page.stream = originalStream
             }
         }
-    }
+        originalPageStreams.clear()
 
-    /**
-     * Update a page to use the translated image and refresh the viewer.
-     */
-    private fun updatePageWithTranslation(page: ReaderPage, translatedFile: java.io.File) {
-        page.stream = { translatedFile.inputStream() }
-        // Trigger UI update if page is currently visible
-        viewModelScope.launch {
+        // Mark all pages as ready so page holders reload with original streams
+        for (page in pages) {
             page.status = Page.State.Ready
-            // Force viewer to refresh the page
-            refreshCurrentViewer()
         }
-    }
 
-    /**
-     * Restore all pages to use original images and refresh the viewer.
-     */
-    private fun restoreOriginalImages() {
-        val currentChapter = state.value.currentChapter ?: return
-        val pages = currentChapter.pages ?: return
-
-        viewModelScope.launchIO {
-            val chapterCache = Injekt.get<ChapterCache>()
-
-            for (page in pages) {
-                val imageUrl = page.imageUrl ?: continue
-                if (chapterCache.isImageInCache(imageUrl)) {
-                    val originalFile = chapterCache.getImageFile(imageUrl)
-                    page.stream = { originalFile.inputStream() }
-                }
-            }
-
-            withUIContext {
-                mutableState.update { it.copy(translationState = emptyMap()) }
-                // Force viewer to refresh after restoring original images
-                refreshCurrentViewer()
-            }
-        }
+        // Refresh viewer to reload pages
+        refreshCurrentViewer()
     }
 
     /**
@@ -529,10 +540,10 @@ class ReaderViewModel @JvmOverloads constructor(
         val viewer = state.value.viewer ?: return
         viewModelScope.launch {
             when (viewer) {
-                is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
+                is PagerViewer -> {
                     viewer.refreshPages()
                 }
-                is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
+                is WebtoonViewer -> {
                     viewer.refreshPages()
                 }
             }
@@ -540,15 +551,19 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Refresh the viewer when translation state changes.
-     * This forces all visible pages to reload with the current stream.
+     * Called when the chapter changes to check if we should show translated images.
      */
-    private fun refreshViewerForTranslation() {
-        val viewer = state.value.viewer ?: return
-        // Force refresh by re-setting the current chapters
-        val viewerChapters = state.value.viewerChapters ?: return
-        viewModelScope.launch {
-            viewer.setChapters(viewerChapters)
+    fun onChapterChanged() {
+        if (state.value.showTranslated) {
+            val hasTranslation = currentChapterHasTranslation()
+            if (!hasTranslation) {
+                // Translation no longer available, revert to original
+                mutableState.update { it.copy(showTranslated = false) }
+            } else {
+                // Apply translated images for the new chapter
+                originalPageStreams.clear()
+                applyTranslatedImages()
+            }
         }
     }
     // KMK <--
@@ -1656,8 +1671,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // SY <--
 
         // KMK -->
-        val translationEnabled: Boolean = false,
-        val translationState: Map<Int, TranslationManager.TranslationStatus> = emptyMap(),
+        val showTranslated: Boolean = false,
         // KMK <--
     ) {
         val currentChapter: ReaderChapter?
@@ -1707,7 +1721,7 @@ class ReaderViewModel @JvmOverloads constructor(
         ) : Event
         data class CopyImage(val uri: Uri) : Event
         // KMK -->
-        data object TranslationNotConfigured : Event
+        data object TranslationNotAvailable : Event
         // KMK <--
     }
 }

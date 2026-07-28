@@ -332,7 +332,10 @@ class MangaScreenModel(
                         // Find chapters sharing same root
                         launchIO {
                             try {
-                                val (acceptedChain) = updateHelper.findAcceptedRootAndDiscardOthers(manga.source, chapters)
+                                val (acceptedChain) = updateHelper.findAcceptedRootAndDiscardOthers(
+                                    manga.source,
+                                    chapters,
+                                )
                                 // Redirect if we are not the accepted root
                                 if (manga.id != acceptedChain.manga.id && acceptedChain.manga.favorite) {
                                     // Update if any of our chapters are not in accepted manga's chapters
@@ -943,7 +946,8 @@ class MangaScreenModel(
         try {
             if (currentManga == null || currentSource == null || currentSource is StubSource) return
 
-            val mangaDir = downloadProvider.findMangaDir(/* SY --> */ currentManga.ogTitle /* SY <-- */, currentSource) ?: return
+            val mangaDir =
+                downloadProvider.findMangaDir(/* SY --> */ currentManga.ogTitle /* SY <-- */, currentSource) ?: return
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(mangaDir.uri, DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1153,7 +1157,7 @@ class MangaScreenModel(
                 showScanlator = !isExhManga,
                 // SY <--
                 // KMK -->
-                translationState = chapter.id.let { translationPreFetchManager.getChapterState(it) },
+                translationState = chapter.id.let { translationPreFetchManager.getChapterState(it, manga, chapter) },
                 // KMK <--
             )
         }
@@ -1166,9 +1170,11 @@ class MangaScreenModel(
                 is GetPagePreviews.Result.Error -> updateSuccessState {
                     it.copy(pagePreviewsState = PagePreviewState.Error(result.error))
                 }
+
                 is GetPagePreviews.Result.Success -> updateSuccessState {
                     it.copy(pagePreviewsState = PagePreviewState.Success(result.pagePreviews))
                 }
+
                 GetPagePreviews.Result.Unused -> updateSuccessState {
                     it.copy(pagePreviewsState = PagePreviewState.Unused)
                 }
@@ -1206,6 +1212,7 @@ class MangaScreenModel(
                 snackbarHostState.showSnackbar(message = message)
             }
         }
+
         val state = successState ?: return
         val relatedMangasEnabled = sourcePreferences.relatedMangas().get()
 
@@ -1263,17 +1270,21 @@ class MangaScreenModel(
             LibraryPreferences.ChapterSwipeAction.ToggleRead -> {
                 markChaptersRead(listOf(chapter), !chapter.read)
             }
+
             LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> {
                 bookmarkChapters(listOf(chapter), !chapter.bookmark)
             }
+
             LibraryPreferences.ChapterSwipeAction.Download -> {
                 val downloadAction: ChapterDownloadAction = when (chapterItem.downloadState) {
                     Download.State.ERROR,
                     Download.State.NOT_DOWNLOADED,
                     -> ChapterDownloadAction.START_NOW
+
                     Download.State.QUEUE,
                     Download.State.DOWNLOADING,
                     -> ChapterDownloadAction.CANCEL
+
                     Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
                 }
                 runChapterDownloadActions(
@@ -1281,6 +1292,7 @@ class MangaScreenModel(
                     action = downloadAction,
                 )
             }
+
             LibraryPreferences.ChapterSwipeAction.Disabled -> throw IllegalStateException()
         }
     }
@@ -1359,14 +1371,17 @@ class MangaScreenModel(
                     downloadManager.startDownloads()
                 }
             }
+
             ChapterDownloadAction.START_NOW -> {
                 val chapter = items.singleOrNull()?.chapter ?: return
                 startDownload(listOf(chapter), true)
             }
+
             ChapterDownloadAction.CANCEL -> {
                 val chapterId = items.singleOrNull()?.id ?: return
                 cancelDownload(chapterId)
             }
+
             ChapterDownloadAction.DELETE -> {
                 deleteChapters(items.map { it.chapter })
             }
@@ -1383,10 +1398,12 @@ class MangaScreenModel(
                 val item = items.singleOrNull() ?: return
                 startChapterTranslation(item)
             }
+
             eu.kanade.presentation.manga.components.ChapterTranslationAction.CANCEL -> {
                 val chapterId = items.singleOrNull()?.id ?: return
                 cancelChapterTranslation(chapterId)
             }
+
             eu.kanade.presentation.manga.components.ChapterTranslationAction.DELETE -> {
                 val chapterId = items.singleOrNull()?.id ?: return
                 deleteChapterTranslation(chapterId)
@@ -1398,16 +1415,20 @@ class MangaScreenModel(
         val chapter = item.chapter
         val manga = successState?.manga ?: return
 
+        if (item.downloadState != Download.State.DOWNLOADED) {
+            screenModelScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = context.stringResource(KMR.strings.translation_download_first),
+                )
+            }
+            return
+        }
+
         screenModelScope.launchIO {
             try {
-                // Get page list for the chapter
-                val source = sourceManager.getOrStub(manga.source)
-                val pages = source.getPageList(chapter.toSChapter())
-
                 translationPreFetchManager.startTranslation(
                     manga = manga,
                     chapter = chapter,
-                    pages = pages,
                 )
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to start translation for chapter ${chapter.id}" }
@@ -1420,7 +1441,10 @@ class MangaScreenModel(
     }
 
     private fun deleteChapterTranslation(chapterId: Long) {
-        translationPreFetchManager.deleteTranslation(chapterId)
+        val successState = successState ?: return
+        val chapter = successState.chapters.find { it.id == chapterId }?.chapter ?: return
+        val manga = successState.manga
+        translationPreFetchManager.deleteTranslation(chapter, manga)
     }
     // KMK <--
 
@@ -1572,7 +1596,9 @@ class MangaScreenModel(
                     if (state.source.id == MERGED_SOURCE_ID) {
                         chapters.groupBy { it.mangaId }.forEach { map ->
                             val manga = state.mergedData?.manga?.get(map.key) ?: return@forEach
-                            val source = state.mergedData.sources.find { it.id != MERGED_SOURCE_ID && manga.source == it.id } ?: return@forEach
+                            val source =
+                                state.mergedData.sources.find { it.id != MERGED_SOURCE_ID && manga.source == it.id }
+                                    ?: return@forEach
                             downloadManager.deleteChapters(
                                 map.value,
                                 manga,
@@ -1636,7 +1662,9 @@ class MangaScreenModel(
                     if (state.source.id == MERGED_SOURCE_ID) {
                         state.mergedData?.manga
                             ?.forEach { (_, manga) ->
-                                val source = state.mergedData.sources.find { it.id != MERGED_SOURCE_ID && manga.source == it.id } ?: return@forEach
+                                val source =
+                                    state.mergedData.sources.find { it.id != MERGED_SOURCE_ID && manga.source == it.id }
+                                        ?: return@forEach
 
                                 downloadManager.deleteManga(
                                     manga = manga,
@@ -1924,6 +1952,7 @@ class MangaScreenModel(
                             mdTrack.id !in tracks.map { it.trackerId } -> {
                                 createMdListTrack()?.let { tracks + it } ?: tracks
                             }
+
                             else -> tracks
                         }
                     } else {
@@ -1982,6 +2011,7 @@ class MangaScreenModel(
             val manga: Manga,
             val initialSelection: ImmutableList<CheckboxState<Category>>,
         ) : Dialog
+
         data class DeleteChapters(val chapters: List<Chapter>) : Dialog
         data class DuplicateManga(val manga: Manga, val duplicates: List<MangaWithChapterCount>) : Dialog
         data class Migrate(val target: Manga, val current: Manga) : Dialog

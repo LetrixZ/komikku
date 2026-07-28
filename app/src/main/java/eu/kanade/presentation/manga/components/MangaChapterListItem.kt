@@ -203,7 +203,9 @@ fun MangaChapterListItem(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (translationStateProvider != null) {
+                // KMK -->
+                // Only show translation button when chapter is downloaded
+                if (translationStateProvider != null && downloadStateProvider() == Download.State.DOWNLOADED) {
                     ChapterTranslationIndicator(
                         enabled = true,
                         translationStateProvider = translationStateProvider,
@@ -218,6 +220,7 @@ fun MangaChapterListItem(
                         },
                     )
                 }
+                // KMK <--
 
                 ChapterDownloadIndicator(
                     enabled = downloadIndicatorEnabled,

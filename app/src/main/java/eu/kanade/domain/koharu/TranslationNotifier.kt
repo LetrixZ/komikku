@@ -1,6 +1,5 @@
 package eu.kanade.domain.koharu
 
-import android.app.PendingIntent
 import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
@@ -11,8 +10,6 @@ import eu.kanade.tachiyomi.util.lang.chop
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
-import logcat.LogPriority
-import logcat.logcat
 
 /**
  * Notifier for translation progress and errors.
