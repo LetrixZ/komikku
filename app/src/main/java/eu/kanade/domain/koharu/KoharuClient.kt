@@ -1,10 +1,12 @@
 package eu.kanade.domain.koharu
 
 import eu.kanade.tachiyomi.network.NetworkHelper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import logcat.LogPriority
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
@@ -13,7 +15,6 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import kotlin.time.Duration.Companion.milliseconds
@@ -26,6 +27,9 @@ class KoharuClient(
     private val networkHelper: NetworkHelper = Injekt.get(),
     private val json: Json = Injekt.get(),
 ) {
+
+    @Volatile
+    private var currentOperationId: String? = null
 
     /**
      * Data classes for API responses
@@ -42,31 +46,35 @@ class KoharuClient(
     )
 
     @Serializable
-    data class ProjectsResponse(
-        val projects: List<Project> = emptyList(),
-    )
-
-    @Serializable
-    data class Project(
-        val id: String,
-        val name: String,
-        val updatedAtMs: Long = 0,
-    )
-
-    @Serializable
     data class SceneResponse(
-        val scene: Scene? = null,
+        val scene: SceneData? = null,
     )
 
     @Serializable
-    data class Scene(
-        val pages: Map<String, PageData>? = null,
+    data class SceneData(
+        val pages: Map<String, ScenePage> = emptyMap(),
     )
 
     @Serializable
-    data class PageData(
+    data class ScenePage(
         val id: String,
         val name: String,
+        val nodes: Map<String, SceneNode> = emptyMap(),
+    )
+
+    @Serializable
+    data class SceneNode(
+        val kind: NodeKind,
+    )
+
+    @Serializable
+    data class NodeKind(
+        val image: ImageNodeData? = null,
+    )
+
+    @Serializable
+    data class ImageNodeData(
+        val role: String,
     )
 
     @Serializable
@@ -95,7 +103,9 @@ class KoharuClient(
     @Serializable
     data class PipelineRequest(
         val steps: List<String>,
+        val targetLanguage: String,
         val defaultFont: String? = null,
+        val pages: List<String>? = null,
     )
 
     @Serializable
@@ -139,34 +149,12 @@ class KoharuClient(
     }
 
     /**
-     * Check if a project exists by its ID.
-     * @param serverUrl The base URL of the Koharu server
-     * @param projectId The project ID to check
-     * @return True if the project exists, false otherwise
-     */
-    suspend fun projectExists(serverUrl: String, projectId: String): Boolean = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/projects"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
-
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Failed to list projects: ${response.code}")
-            }
-            val body = response.body.string()
-            val projects = json.decodeFromString<ProjectsResponse>(body)
-            projects.projects.any { it.id == projectId }
-        }
-    }
-
-    /**
      * Load an existing project.
      * @param serverUrl The base URL of the Koharu server
      * @param projectId The project ID to load
+     * @return True if the project was loaded successfully, false if it doesn't exist
      */
-    suspend fun loadProject(serverUrl: String, projectId: String) = withIOContext {
+    suspend fun loadProject(serverUrl: String, projectId: String): Boolean = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/projects/current"
         val body = """{"id":"$projectId"}"""
         val request = Request.Builder()
@@ -175,31 +163,7 @@ class KoharuClient(
             .build()
 
         networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Failed to load project: ${response.code}")
-            }
-        }
-    }
-
-    /**
-     * Check if the current project has any pages.
-     * @param serverUrl The base URL of the Koharu server
-     * @return True if the project has pages, false otherwise
-     */
-    suspend fun projectHasPages(serverUrl: String): Boolean = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/scene.json"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
-
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                return@use false
-            }
-            val body = response.body.string()
-            val scene = json.decodeFromString<SceneResponse>(body)
-            scene.scene?.pages?.isNotEmpty() == true
+            response.isSuccessful
         }
     }
 
@@ -227,21 +191,24 @@ class KoharuClient(
     }
 
     /**
-     * Add a page image to the current project.
+     * Add multiple page images to the current project in a single multipart request.
      * @param serverUrl The base URL of the Koharu server
-     * @param imageStream The image stream to upload
-     * @return List of page IDs that were added
+     * @param pages List of pairs (filename, image bytes)
+     * @return List of page IDs that were added, in the same order as input
      */
-    suspend fun addPage(serverUrl: String, imageStream: () -> InputStream): List<String> = withIOContext {
+    suspend fun addPages(serverUrl: String, pages: List<Pair<String, ByteArray>>): List<String> = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/pages"
-        val imageBytes = imageStream().readBytes()
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "page",
-                "page.png",
-                imageBytes.toRequestBody("image/png".toMediaType()),
-            )
+            .apply {
+                for ((filename, bytes) in pages) {
+                    addFormDataPart(
+                        "page",
+                        filename,
+                        bytes.toRequestBody("image/png".toMediaType()),
+                    )
+                }
+            }
             .build()
 
         val request = Request.Builder()
@@ -251,7 +218,7 @@ class KoharuClient(
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("Failed to add page: ${response.code}")
+                throw IOException("Failed to add pages: ${response.code}")
             }
             val body = response.body.string()
             val addPagesResponse = json.decodeFromString<AddPagesResponse>(body)
@@ -325,9 +292,11 @@ class KoharuClient(
     /**
      * Run the translation pipeline.
      * @param serverUrl The base URL of the Koharu server
+     * @param targetLanguage The target language for translation
+     * @param pageIds Optional list of page IDs to run the pipeline for. If null, runs for all pages.
      * @return The operation ID
      */
-    suspend fun runPipeline(serverUrl: String): String = withIOContext {
+    suspend fun runPipeline(serverUrl: String, targetLanguage: String, pageIds: List<String>? = null): String = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/pipelines"
         val pipelineRequest = PipelineRequest(
             steps = listOf(
@@ -340,7 +309,9 @@ class KoharuClient(
                 "lama-manga",
                 "koharu-renderer",
             ),
-            defaultFont = "CCMeanwhile-Regular",
+            targetLanguage = targetLanguage,
+            defaultFont = "CCMeanwhile-Regular", // TODO: Allow to customize the font
+            pages = pageIds,
         )
         val body = json.encodeToString(PipelineRequest.serializer(), pipelineRequest)
         val request = Request.Builder()
@@ -415,12 +386,48 @@ class KoharuClient(
     }
 
     /**
-     * Export the translated image from the current project.
+     * Cancel a running operation.
      * @param serverUrl The base URL of the Koharu server
-     * @param outputFile The file to save the exported image to
-     * @return True if export succeeded, false otherwise
+     * @param operationId The operation ID to cancel
      */
-    suspend fun exportTranslatedImage(serverUrl: String, outputFile: File, retry: Boolean): Boolean = withIOContext {
+    suspend fun cancelOperation(serverUrl: String, operationId: String) = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/api/v1/operations/$operationId"
+        val request = Request.Builder()
+            .url(url)
+            .delete()
+            .build()
+
+        networkHelper.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                logcat { "Failed to cancel operation: ${response.code}" }
+            }
+        }
+    }
+
+    /**
+     * Cancel the currently running operation, if any.
+     * Uses NonCancellable context to ensure the cancellation request is sent
+     * even when the calling coroutine is already cancelled.
+     * @param serverUrl The base URL of the Koharu server
+     */
+    suspend fun cancelCurrentOperation(serverUrl: String) {
+        val operationId = currentOperationId ?: return
+        withContext(NonCancellable) {
+            cancelOperation(serverUrl, operationId)
+        }
+    }
+
+    /**
+     * Export translated images from the current project.
+     * Handles both single-image (direct image data) and multi-page (ZIP) responses.
+     * @param serverUrl The base URL of the Koharu server
+     * @param expectedPageIds The page IDs we expect in the export, used for single-image fallback
+     * @return Map of pageId to image bytes
+     */
+    suspend fun exportTranslatedPages(
+        serverUrl: String,
+        expectedPageIds: Set<String>,
+    ): Map<String, ByteArray> = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/projects/current/export"
         val body = """{"format":"rendered"}"""
         val request = Request.Builder()
@@ -429,105 +436,216 @@ class KoharuClient(
             .build()
 
         networkHelper.client.newCall(request).execute().use { response ->
-            if (retry && response.code == 400) {
-                // Retry after 1 second
-                delay(1000.milliseconds)
-                return@withIOContext exportTranslatedImage(serverUrl, outputFile, true)
-            }
             if (!response.isSuccessful) {
-                logcat { "Failed to export image: ${response.code}" }
-                return@withIOContext false
+                throw IOException("Failed to export project: ${response.code}")
             }
-            response.body.byteStream().use { input ->
-                outputFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+
+            val contentType = response.header("content-type") ?: ""
+            val responseBytes = response.body.bytes()
+
+            if (contentType.contains("zip") || contentType.contains("application/zip")) {
+                // Multi-page response: ZIP file
+                parseZipExport(responseBytes)
+            } else {
+                // Single image response
+                val pageId = expectedPageIds.firstOrNull()
+                    ?: throw IOException("No expected page IDs for single-image export")
+                mapOf(pageId to responseBytes)
             }
-            true
         }
     }
 
     /**
-     * Translate a single page image.
-     * This is the main method that orchestrates the entire translation process.
-     * @param serverUrl The base URL of the Koharu server
-     * @param chapterId The chapter ID
-     * @param pageIndex The page index
-     * @param imageStream The image stream to translate
-     * @param outputFile The file to save the translated image to
-     * @param modelId The LLM model ID to use
-     * @return True if translation succeeded, false otherwise
+     * Parse a ZIP export response and extract page images.
+     * ZIP entries have format: page-{pageNumber}-{pageId}.png
      */
-    suspend fun translatePage(
-        serverUrl: String,
-        chapterId: Long,
-        pageIndex: Int,
-        imageStream: () -> InputStream,
-        outputFile: File,
-        modelId: String,
-        targetLanguage: String,
-    ): Boolean = withIOContext {
-        val projectId = "$chapterId-$pageIndex-$modelId-$targetLanguage"
-
-        try {
-            // Step 0: Check if project exists
-            val exists = projectExists(serverUrl, projectId)
-            if (exists) {
-                // Load existing project
-                loadProject(serverUrl, projectId)
-
-                // Check if it has pages
-                val hasPages = projectHasPages(serverUrl)
-                if (!hasPages) {
-                    // No pages, add the page
-                    addPage(serverUrl, imageStream)
-                } else {
-                    // If it has pages, try exporting image
-                    try {
-                        if (exportTranslatedImage(serverUrl, outputFile, false)) {
-                            return@withIOContext true
-                        }
-                    } catch (_: Exception) {
+    private fun parseZipExport(zipBytes: ByteArray): Map<String, ByteArray> {
+        val result = mutableMapOf<String, ByteArray>()
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipBytes)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val name = entry.name
+                    // Format: page-{pageNumber}-{pageId}.png
+                    val nameWithoutExt = name.removeSuffix(".png")
+                    val afterPrefix = nameWithoutExt.removePrefix("page-")
+                    val dashIndex = afterPrefix.indexOf('-')
+                    if (dashIndex > 0) {
+                        val pageId = afterPrefix.substring(dashIndex + 1)
+                        result[pageId] = zis.readBytes()
                     }
                 }
-            } else {
-                // Step 1: Create new project
-                createProject(serverUrl, projectId)
-                // Project is automatically loaded
-
-                // Step 2: Add the page
-                addPage(serverUrl, imageStream)
+                entry = zis.nextEntry
             }
+        }
+        return result
+    }
 
-            // Step 3: Load LLM
-            val llmState = getLlmState(serverUrl)
-            if (llmState.target?.modelId != modelId) {
-                loadLlm(serverUrl, modelId)
-                if (!waitForLlmReady(serverUrl)) {
-                    logcat { "LLM failed to load" }
-                    return@withIOContext false
+    /**
+     * Ensure the specified LLM model is loaded and ready.
+     * Loads the model if it's not currently loaded.
+     */
+    private suspend fun ensureLlmLoaded(serverUrl: String, modelId: String) {
+        val llmState = getLlmState(serverUrl)
+        if (llmState.status != "ready" || llmState.target?.modelId != modelId) {
+            loadLlm(serverUrl, modelId)
+            if (!waitForLlmReady(serverUrl)) {
+                throw IOException("LLM failed to load: $modelId")
+            }
+        }
+    }
+
+    /**
+     * Get the current scene data.
+     * @param serverUrl The base URL of the Koharu server
+     * @return The scene data, or null if not available
+     */
+    private suspend fun getScene(serverUrl: String): SceneData? = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/api/v1/scene.json"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+
+        networkHelper.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                return@use null
+            }
+            val body = response.body.string()
+            val sceneResponse = json.decodeFromString<SceneResponse>(body)
+            sceneResponse.scene
+        }
+    }
+
+    /**
+     * Translate an entire chapter using a single Koharu project.
+     * Creates or reuses a project named {chapterId}-{modelId}-{targetLanguage}.
+     * @param serverUrl The base URL of the Koharu server
+     * @param chapterId The chapter ID
+     * @param pages List of page data (index, name, stream) for all pages in the chapter
+     * @param modelId The LLM model ID to use
+     * @param targetLanguage The target language for translation
+     * @return Map of page index to translated image bytes
+     */
+    suspend fun translateChapter(
+        serverUrl: String,
+        chapterId: Long,
+        pages: List<ChapterPageData>,
+        modelId: String,
+        targetLanguage: String,
+    ): Map<Int, ByteArray> = withIOContext {
+        val projectId = "$chapterId-$modelId-$targetLanguage"
+
+        // pageId -> pageIndex mapping
+        val pageIdToIndex = mutableMapOf<String, Int>()
+
+        // Try to load existing project
+        val projectLoaded = loadProject(serverUrl, projectId)
+
+        if (projectLoaded) {
+            // Get scene to check current state
+            val scene = getScene(serverUrl)
+            val scenePages = scene?.pages ?: emptyMap()
+
+            val pagesNeedingPipeline = mutableListOf<String>()
+
+            // Match our pages to scene pages by name
+            for (pageData in pages) {
+                val pageName = pageData.name
+                val scenePage = scenePages.values.find { it.name == pageName }
+
+                if (scenePage != null) {
+                    pageIdToIndex[scenePage.id] = pageData.index
+                    // Check if it has a rendered image node
+                    val hasRendered = scenePage.nodes.values.any {
+                        it.kind.image?.role == "rendered"
+                    }
+                    if (!hasRendered) {
+                        pagesNeedingPipeline.add(scenePage.id)
+                    }
                 }
             }
 
-            // Step 4: Run pipeline
-            val operationId = runPipeline(serverUrl)
-
-            // Step 5: Wait for completion
-            if (!waitForPipelineCompletion(serverUrl, operationId)) {
-                logcat { "Pipeline failed or timed out" }
-                return@withIOContext false
+            // Upload pages that are missing from the scene
+            val missingPages = pages.filter { pageData ->
+                scenePages.values.none { it.name == pageData.name }
             }
 
-            // Step 6: Export translated image
-            if (!exportTranslatedImage(serverUrl, outputFile, true)) {
-                logcat { "Failed to export translated image" }
-                return@withIOContext false
+            if (missingPages.isNotEmpty()) {
+                val newPageIds = addPages(serverUrl, missingPages.map { it.name to it.stream().readBytes() })
+                for ((i, pageId) in newPageIds.withIndex()) {
+                    pageIdToIndex[pageId] = missingPages[i].index
+                    pagesNeedingPipeline.add(pageId)
+                }
             }
 
-            true
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Translation failed" }
-            false
+            // Run pipeline for pages that need it
+            if (pagesNeedingPipeline.isNotEmpty()) {
+                ensureLlmLoaded(serverUrl, modelId)
+                val operationId = runPipeline(serverUrl, targetLanguage, pagesNeedingPipeline)
+                currentOperationId = operationId
+                try {
+                    if (!waitForPipelineCompletion(serverUrl, operationId)) {
+                        throw IOException("Pipeline failed or timed out")
+                    }
+                } catch (e: CancellationException) {
+                    withContext(NonCancellable) {
+                        cancelOperation(serverUrl, operationId)
+                    }
+                    throw e
+                } finally {
+                    currentOperationId = null
+                }
+            }
+        } else {
+            // Create new project
+            createProject(serverUrl, projectId)
+            // Project is automatically loaded
+
+            // Upload all pages
+            val pageIds = addPages(serverUrl, pages.map { it.name to it.stream().readBytes() })
+            for ((i, pageId) in pageIds.withIndex()) {
+                pageIdToIndex[pageId] = pages[i].index
+            }
+
+            // Load LLM
+            ensureLlmLoaded(serverUrl, modelId)
+
+            // Run pipeline for all pages (no pageIds filter)
+            val operationId = runPipeline(serverUrl, targetLanguage)
+            currentOperationId = operationId
+            try {
+                if (!waitForPipelineCompletion(serverUrl, operationId)) {
+                    throw IOException("Pipeline failed or timed out")
+                }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) {
+                    cancelOperation(serverUrl, operationId)
+                }
+                throw e
+            } finally {
+                currentOperationId = null
+            }
         }
+
+        // Export translated pages
+        val exportedPages = exportTranslatedPages(serverUrl, pageIdToIndex.keys)
+
+        // Map pageIds back to page indices
+        val result = mutableMapOf<Int, ByteArray>()
+        for ((pageId, bytes) in exportedPages) {
+            val index = pageIdToIndex[pageId]
+            if (index != null) {
+                result[index] = bytes
+            }
+        }
+
+        result
     }
 }
+
+data class ChapterPageData(
+    val index: Int,
+    val name: String,
+    val stream: () -> InputStream,
+)

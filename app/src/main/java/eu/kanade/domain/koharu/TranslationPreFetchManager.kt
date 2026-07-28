@@ -68,7 +68,6 @@ class TranslationPreFetchManager(
     data class TranslationRequest(
         val manga: Manga,
         val chapter: Chapter,
-        val pages: List<Page>,
     )
 
     data class ChapterTranslationState(
@@ -131,7 +130,7 @@ class TranslationPreFetchManager(
         // Add to queue
         scope.launch {
             queueMutex.withLock {
-                translationQueue.add(TranslationRequest(manga, chapter, emptyList()))
+                translationQueue.add(TranslationRequest(manga, chapter))
                 logcat { "Queued translation for chapter $chapterId" }
             }
             processQueue()
@@ -158,7 +157,7 @@ class TranslationPreFetchManager(
                         chapterId = chapterId,
                         state = ChapterTranslationState.State.TRANSLATING,
                         progress = 0,
-                        totalPages = request.pages.size,
+                        totalPages = 0,
                         translatedPages = 0,
                     ),
                 )
@@ -427,54 +426,60 @@ class TranslationPreFetchManager(
                 }
                 // KMK <--
 
-                for ((index, page) in pages.withIndex()) {
-                    // Check if already translated and stored persistently
+                // Check if all pages are already translated in storage
+                val allAlreadyTranslated = pages.all { page ->
                     val existingFile = translationStorage.getTranslatedPageFile(
                         source = source,
                         mangaTitle = manga.title,
                         chapterName = chapter.name,
                         chapterScanlator = chapter.scanlator,
-                        pageIndex = index,
+                        pageIndex = page.index,
                     )
+                    existingFile != null && existingFile.exists()
+                }
 
-                    if (existingFile != null && existingFile.exists()) {
-                        translatedCount++
-                        updateProgress(chapterId, translatedCount, pages.size)
-                        notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
-                        continue
+                if (allAlreadyTranslated) {
+                    translatedCount = pages.size
+                    updateProgress(chapterId, translatedCount, pages.size)
+                    notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
+                } else {
+                    // Build page data for all pages (Koharu project is per-chapter)
+                    val allPageData = pages.map { page ->
+                        ChapterPageData(
+                            index = page.index,
+                            name = "page_${page.index}.png",
+                            stream = page.stream ?: throw Exception("Page ${page.index + 1} has no stream"),
+                        )
                     }
 
-                    // Get the actual image file from the downloaded chapter
-                    val imageStream = page.stream ?: throw Exception("Page ${index + 1} has no stream")
-
-                    val outputFile = File.createTempFile("translated_${index}_", ".png")
-
-                    val success = koharuClient.translatePage(
+                    // Translate entire chapter via Koharu
+                    val translatedPages = koharuClient.translateChapter(
                         serverUrl = serverUrl,
                         chapterId = chapterId,
-                        pageIndex = index,
-                        imageStream = imageStream,
-                        outputFile = outputFile,
+                        pages = allPageData,
                         modelId = model,
                         targetLanguage = language,
                     )
 
-                    if (success && outputFile.exists()) {
-                        // Save to persistent storage
-                        translationStorage.saveTranslatedPage(
-                            source = source,
-                            mangaTitle = manga.title,
-                            chapterName = chapter.name,
-                            chapterScanlator = chapter.scanlator,
-                            pageIndex = index,
-                            imageFile = outputFile,
-                        )
-                        outputFile.delete() // Clean up temp file
-                        translatedCount++
-                        updateProgress(chapterId, translatedCount, pages.size)
-                        notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
-                    } else {
-                        throw Exception("Translation failed for page ${index + 1}")
+                    // Save translated pages to persistent storage
+                    for ((index, bytes) in translatedPages) {
+                        val tempFile = File.createTempFile("translated_${index}_", ".png")
+                        try {
+                            tempFile.writeBytes(bytes)
+                            translationStorage.saveTranslatedPage(
+                                source = source,
+                                mangaTitle = manga.title,
+                                chapterName = chapter.name,
+                                chapterScanlator = chapter.scanlator,
+                                pageIndex = index,
+                                imageFile = tempFile,
+                            )
+                            translatedCount++
+                            updateProgress(chapterId, translatedCount, pages.size)
+                            notifier.onProgressChange(manga.title, chapter.name, translatedCount, pages.size)
+                        } finally {
+                            tempFile.delete()
+                        }
                     }
                 }
             }
@@ -493,6 +498,7 @@ class TranslationPreFetchManager(
         } catch (e: CancellationException) {
             logcat { "Translation cancelled for chapter $chapterId" }
             notifier.dismissProgress()
+            koharuClient.cancelCurrentOperation(serverUrl)
             throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR) { "Translation failed for chapter $chapterId: ${e.message}" }

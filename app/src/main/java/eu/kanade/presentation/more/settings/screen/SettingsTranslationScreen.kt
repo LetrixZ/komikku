@@ -129,20 +129,20 @@ object SettingsTranslationScreen : SearchableSettings {
                         },
                         enabled = languageEntries.isNotEmpty(),
                     ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(KMR.strings.pref_koharu_clear_cache),
-                        subtitle = stringResource(KMR.strings.pref_koharu_clear_cache_summary, storageSize),
-                        onClick = { showClearCacheDialog = true },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(KMR.strings.pref_koharu_about),
-                        onClick = {
-                            uriHandler.openUri(
-                                "https://koharu.rs",
-                            )
-                        },
-                    ),
                 ),
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(KMR.strings.pref_koharu_clear_cache),
+                subtitle = stringResource(KMR.strings.pref_koharu_clear_cache_summary, storageSize),
+                onClick = { showClearCacheDialog = true },
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(KMR.strings.pref_koharu_about),
+                onClick = {
+                    uriHandler.openUri(
+                        "https://koharu.rs",
+                    )
+                },
             ),
         ).also {
             if (showClearCacheDialog) {
