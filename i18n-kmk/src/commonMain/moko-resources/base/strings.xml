@@ -260,6 +260,8 @@
     <string name="pref_koharu_connection_error">Failed to connect to Koharu server</string>
     <string name="pref_koharu_select_model_first">Select a model first</string>
     <string name="pref_koharu_about">About Koharu</string>
+    <string name="pref_koharu_paged">Paged translation</string>
+    <string name="pref_koharu_paged_summary">Indicates if all pages should be translated in the same prompt. This could lead to better results but can be more resource intensive.</string>
 
     <!-- Translation -->
     <string name="action_translate_chapter">Translate chapter</string>

@@ -396,6 +396,8 @@ class TranslationPreFetchManager(
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuLlmModel().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
+        val paged = koharuPreferences.koharuPaged().get()
+        val pipelineTimeoutMs = koharuPreferences.koharuPipelineTimeoutMs().get()
 
         var translatedCount = 0
         var pages: List<ReaderPage> = emptyList()
@@ -405,7 +407,6 @@ class TranslationPreFetchManager(
                 // Get the manga and source to locate downloaded files
                 val source = Injekt.get<SourceManager>().getOrStub(manga.source)
 
-                // KMK -->
                 pages = if (source.isLocal()) {
                     // For Local source, load pages directly from local files
                     getPagesFromLocalSource(manga, chapter)
@@ -424,7 +425,6 @@ class TranslationPreFetchManager(
                         getPagesFromDirectory(source, manga, chapter)
                     }
                 }
-                // KMK <--
 
                 // Check if all pages are already translated in storage
                 val allAlreadyTranslated = pages.all { page ->
@@ -459,6 +459,8 @@ class TranslationPreFetchManager(
                         pages = allPageData,
                         modelId = model,
                         targetLanguage = language,
+                        paged = paged,
+                        timeoutMs = pipelineTimeoutMs
                     )
 
                     // Save translated pages to persistent storage
@@ -539,7 +541,6 @@ class TranslationPreFetchManager(
         }
     }
 
-    // KMK -->
     /**
      * Load pages from Local source chapter files.
      */
@@ -589,7 +590,6 @@ class TranslationPreFetchManager(
         val ext = filename.substringAfterLast('.', "").lowercase()
         return ext in listOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
     }
-    // KMK <--
 
     private fun updateProgress(chapterId: Long, translatedPages: Int, totalPages: Int) {
         val progress = if (totalPages > 0) (translatedPages * 100) / totalPages else 0

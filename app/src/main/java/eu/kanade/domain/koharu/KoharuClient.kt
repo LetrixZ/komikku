@@ -104,6 +104,7 @@ class KoharuClient(
     data class PipelineRequest(
         val steps: List<String>,
         val targetLanguage: String,
+        val paged: Boolean = false,
         val defaultFont: String? = null,
         val pages: List<String>? = null,
     )
@@ -296,7 +297,12 @@ class KoharuClient(
      * @param pageIds Optional list of page IDs to run the pipeline for. If null, runs for all pages.
      * @return The operation ID
      */
-    suspend fun runPipeline(serverUrl: String, targetLanguage: String, pageIds: List<String>? = null): String = withIOContext {
+    suspend fun runPipeline(
+        serverUrl: String,
+        targetLanguage: String,
+        paged: Boolean = false,
+        pageIds: List<String>? = null,
+    ): String = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/api/v1/pipelines"
         val pipelineRequest = PipelineRequest(
             steps = listOf(
@@ -310,6 +316,7 @@ class KoharuClient(
                 "koharu-renderer",
             ),
             targetLanguage = targetLanguage,
+            paged = paged,
             defaultFont = "CCMeanwhile-Regular", // TODO: Allow to customize the font
             pages = pageIds,
         )
@@ -363,7 +370,7 @@ class KoharuClient(
     suspend fun waitForPipelineCompletion(
         serverUrl: String,
         operationId: String,
-        timeoutMs: Long = 300000,
+        timeoutMs: Long = 1800000,
     ): Boolean = withIOContext {
         val startTime = System.currentTimeMillis()
         while (System.currentTimeMillis() - startTime < timeoutMs) {
@@ -533,6 +540,8 @@ class KoharuClient(
         pages: List<ChapterPageData>,
         modelId: String,
         targetLanguage: String,
+        paged: Boolean,
+        timeoutMs: Long,
     ): Map<Int, ByteArray> = withIOContext {
         val projectId = "$chapterId-$modelId-$targetLanguage"
 
@@ -582,10 +591,10 @@ class KoharuClient(
             // Run pipeline for pages that need it
             if (pagesNeedingPipeline.isNotEmpty()) {
                 ensureLlmLoaded(serverUrl, modelId)
-                val operationId = runPipeline(serverUrl, targetLanguage, pagesNeedingPipeline)
+                val operationId = runPipeline(serverUrl, targetLanguage, paged, pagesNeedingPipeline)
                 currentOperationId = operationId
                 try {
-                    if (!waitForPipelineCompletion(serverUrl, operationId)) {
+                    if (!waitForPipelineCompletion(serverUrl, operationId, timeoutMs)) {
                         throw IOException("Pipeline failed or timed out")
                     }
                 } catch (e: CancellationException) {
@@ -612,10 +621,10 @@ class KoharuClient(
             ensureLlmLoaded(serverUrl, modelId)
 
             // Run pipeline for all pages (no pageIds filter)
-            val operationId = runPipeline(serverUrl, targetLanguage)
+            val operationId = runPipeline(serverUrl, targetLanguage, paged)
             currentOperationId = operationId
             try {
-                if (!waitForPipelineCompletion(serverUrl, operationId)) {
+                if (!waitForPipelineCompletion(serverUrl, operationId, timeoutMs)) {
                     throw IOException("Pipeline failed or timed out")
                 }
             } catch (e: CancellationException) {

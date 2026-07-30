@@ -12,4 +12,8 @@ class KoharuPreferences(
     fun koharuLlmModel() = preferenceStore.getString("pref_koharu_llm_model", "")
 
     fun koharuTargetLanguage() = preferenceStore.getString("pref_koharu_target_language", "")
+
+    fun koharuPaged() = preferenceStore.getBoolean("pref_koharu_paged", false)
+
+    fun koharuPipelineTimeoutMs() = preferenceStore.getLong("pref_koharu_pipeline_timeout_ms", 600000)
 }

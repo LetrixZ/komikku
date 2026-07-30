@@ -53,6 +53,7 @@ object SettingsTranslationScreen : SearchableSettings {
         val serverUrlPref = koharuPreferences.koharuServerUrl()
         val llmModelPref = koharuPreferences.koharuLlmModel()
         val targetLanguagePref = koharuPreferences.koharuTargetLanguage()
+        val pagedPerf = koharuPreferences.koharuPaged()
 
         val serverUrl by serverUrlPref.changes().collectAsState(initial = serverUrlPref.get())
         val llmModel by llmModelPref.changes().collectAsState(initial = llmModelPref.get())
@@ -128,6 +129,11 @@ object SettingsTranslationScreen : SearchableSettings {
                             "%s"
                         },
                         enabled = languageEntries.isNotEmpty(),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = pagedPerf,
+                        title = stringResource(KMR.strings.pref_koharu_paged),
+                        subtitle = stringResource(KMR.strings.pref_koharu_paged_summary),
                     ),
                 ),
             ),
