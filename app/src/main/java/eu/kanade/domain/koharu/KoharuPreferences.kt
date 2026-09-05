@@ -13,6 +13,10 @@ class KoharuPreferences(
 
     fun koharuModelQuantization() = preferenceStore.getString("pref_koharu_translation_model_quantiazation", "")
 
+    fun koharuModelReasoning() = preferenceStore.getBoolean("pref_koharu_translation_model_reasoning", false)
+
+    fun koharuModelVision() = preferenceStore.getBoolean("pref_koharu_translation_model_vision", false)
+
     fun koharuTargetLanguage() = preferenceStore.getString("pref_koharu_target_language", "")
 
     fun koharuPipelineTimeoutMs() = preferenceStore.getLong("pref_koharu_pipeline_timeout_ms", 600000)

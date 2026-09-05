@@ -175,29 +175,30 @@ class KoharuClient(
      * @param pages List of pairs (filename, image bytes)
      * @return List of page IDs that were added, in the same order as input
      */
-    suspend fun addPages(serverUrl: String, projectId: String, pages: List<Pair<String, ByteArray>>): List<String> = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId/images"
-        val requestBody = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
-            for ((filename, bytes) in pages) {
-                addFormDataPart(
-                    "images",
-                    filename,
-                    bytes.toRequestBody("image/png".toMediaType()),
-                )
-            }
-        }.build()
+    suspend fun addPages(serverUrl: String, projectId: String, pages: List<Pair<String, ByteArray>>): List<String> =
+        withIOContext {
+            val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId/images"
+            val requestBody = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+                for ((filename, bytes) in pages) {
+                    addFormDataPart(
+                        "images",
+                        filename,
+                        bytes.toRequestBody("image/png".toMediaType()),
+                    )
+                }
+            }.build()
 
-        val request = Request.Builder().url(url).post(requestBody).build()
+            val request = Request.Builder().url(url).post(requestBody).build()
 
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Failed to add pages: ${response.code}")
+            networkHelper.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Failed to add pages: ${response.code}")
+                }
+                val body = response.body.string()
+                val project = json.decodeFromString<Project>(body)
+                project.pages.map { it.id }
             }
-            val body = response.body.string()
-            val project = json.decodeFromString<Project>(body)
-            project.pages.map { it.id }
         }
-    }
 
     /**
      * Run the translation pipeline.
@@ -360,11 +361,13 @@ class KoharuClient(
         serverUrl: String,
         modelId: String,
         modelQuantization: String,
+        modelReasoning: Boolean,
+        modelVision: Boolean,
         targetLanguage: String,
     ) = withIOContext {
         val url = "${serverUrl.trimEnd('/')}/v1/translation/preferences"
         val body =
-            """{"model":{"provider":"local","model":"$modelId","quantization":"$modelQuantization","vision":true,"reasoning":true},"target_language":"$targetLanguage"}"""
+            """{"model":{"provider":"local","model":"$modelId","quantization":"$modelQuantization","vision":$modelVision,"reasoning":$modelReasoning},"target_language":"$targetLanguage"}"""
         val request = Request.Builder().url(url).put(body.toRequestBody("application/json".toMediaType())).build()
 
         networkHelper.client.newCall(request).execute()
@@ -386,10 +389,18 @@ class KoharuClient(
         pages: List<ChapterPageData>,
         modelId: String,
         modelQuantization: String,
+        modelReasoning: Boolean,
+        modelVision: Boolean,
         targetLanguage: String,
         timeoutMs: Long,
     ): Map<Int, ByteArray> = withIOContext {
-        val projectId = "$chapterId-$modelId-$targetLanguage"
+        val projectId = listOfNotNull(
+            chapterId,
+            modelId,
+            "reasoning".takeIf { modelReasoning },
+            "vision".takeIf { modelVision },
+            targetLanguage,
+        ).joinToString("-")
 
         val pageLabelToIndex = mutableMapOf<String, Int>()
 
@@ -422,7 +433,14 @@ class KoharuClient(
             }
 
             if (pagesNeedingPipeline.isNotEmpty()) {
-                setTranslationPreferences(serverUrl, modelId, modelQuantization, targetLanguage)
+                setTranslationPreferences(
+                    serverUrl,
+                    modelId,
+                    modelQuantization,
+                    modelReasoning,
+                    modelVision,
+                    targetLanguage,
+                )
 
                 val jobId = runPipeline(serverUrl, projectId, pagesNeedingPipeline)
                 currentJobId = jobId
@@ -447,7 +465,14 @@ class KoharuClient(
                 pageLabelToIndex[pageId] = pages[i].index
             }
 
-            setTranslationPreferences(serverUrl, modelId, modelQuantization, targetLanguage)
+            setTranslationPreferences(
+                serverUrl,
+                modelId,
+                modelQuantization,
+                modelReasoning,
+                modelVision,
+                targetLanguage,
+            )
 
             val operationId = runPipeline(serverUrl, projectId)
             currentJobId = operationId

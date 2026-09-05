@@ -266,6 +266,10 @@
     <string name="pref_koharu_select_model">Select a model</string>
     <string name="pref_koharu_select_model_quantization">Select a quantization</string>
     <string name="pref_koharu_select_target_language">Select a target language</string>
+    <string name="pref_koharu_model_reasoning">Reasoning</string>
+    <string name="pref_koharu_model_reasoning_summary">Use model reasoning during translation.</string>
+    <string name="pref_koharu_model_vision">Vision</string>
+    <string name="pref_koharu_model_vision_summary">Feed page images to the model during translation.</string>
     <string name="pref_koharu_about">About Koharu</string>
 
     <!-- Translation -->

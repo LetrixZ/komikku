@@ -92,8 +92,9 @@ class TranslationPreFetchManager(
     fun isConfigured(): Boolean {
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuTranslationModel().get()
+        val modelQuantization = koharuPreferences.koharuModelQuantization().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
-        return serverUrl.isNotBlank() && model.isNotBlank() && language.isNotBlank()
+        return serverUrl.isNotBlank() && model.isNotBlank() && modelQuantization.isNotBlank() && language.isNotBlank()
     }
 
     /**
@@ -396,6 +397,8 @@ class TranslationPreFetchManager(
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuTranslationModel().get()
         val modelQuantization = koharuPreferences.koharuModelQuantization().get()
+        val modelReasoning = koharuPreferences.koharuModelReasoning().get()
+        val modelVision = koharuPreferences.koharuModelVision().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
         val pipelineTimeoutMs = koharuPreferences.koharuPipelineTimeoutMs().get()
 
@@ -459,8 +462,10 @@ class TranslationPreFetchManager(
                         pages = allPageData,
                         modelId = model,
                         modelQuantization = modelQuantization,
+                        modelReasoning = modelReasoning,
+                        modelVision = modelVision,
                         targetLanguage = language,
-                        timeoutMs = pipelineTimeoutMs
+                        timeoutMs = pipelineTimeoutMs,
                     )
 
                     // Save translated pages to persistent storage

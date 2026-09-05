@@ -53,6 +53,8 @@ object SettingsTranslationScreen : SearchableSettings {
         val serverUrlPref = koharuPreferences.koharuServerUrl()
         val translationModelPref = koharuPreferences.koharuTranslationModel()
         val modelQuantizationPref = koharuPreferences.koharuModelQuantization()
+        val modelReasoningPerf = koharuPreferences.koharuModelReasoning()
+        val modelVisionPerf = koharuPreferences.koharuModelVision()
         val targetLanguagePref = koharuPreferences.koharuTargetLanguage()
 
         val serverUrl by serverUrlPref.changes().collectAsState(initial = serverUrlPref.get())
@@ -149,7 +151,7 @@ object SettingsTranslationScreen : SearchableSettings {
                             translationModelPref.set(it)
                             modelQuantizationPref.set("")
                             true
-                        }
+                        },
                     ),
                     Preference.PreferenceItem.ListPreference(
                         preference = modelQuantizationPref,
@@ -165,6 +167,16 @@ object SettingsTranslationScreen : SearchableSettings {
                             "%s"
                         },
                         enabled = !isLoadingModels,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = modelReasoningPerf,
+                        title = stringResource(KMR.strings.pref_koharu_model_reasoning),
+                        subtitle = stringResource(KMR.strings.pref_koharu_model_reasoning_summary),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = modelVisionPerf,
+                        title = stringResource(KMR.strings.pref_koharu_model_vision),
+                        subtitle = stringResource(KMR.strings.pref_koharu_model_vision_summary),
                     ),
                     Preference.PreferenceItem.ListPreference(
                         preference = targetLanguagePref,
