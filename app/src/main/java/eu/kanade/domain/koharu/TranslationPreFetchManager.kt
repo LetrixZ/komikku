@@ -466,6 +466,11 @@ class TranslationPreFetchManager(
                         modelVision = modelVision,
                         targetLanguage = language,
                         timeoutMs = pipelineTimeoutMs,
+                        onProgress = { completed, total ->
+                            if (total > 0) {
+                                updateProgress(chapterId, completed, total)
+                            }
+                        },
                     )
 
                     // Save translated pages to persistent storage
