@@ -243,8 +243,10 @@
     <string name="pref_koharu_translation_summary">Configure manga translation service</string>
     <string name="pref_koharu_server_url">Server URL</string>
     <string name="pref_koharu_server_url_summary">URL of the Koharu translation server</string>
-    <string name="pref_koharu_llm_model">LLM Model</string>
-    <string name="pref_koharu_llm_model_summary">Select the language model for translation</string>
+    <string name="pref_koharu_translation_model">Translation Model</string>
+    <string name="pref_koharu_translation_model_summary">Select the model for the translation</string>
+    <string name="pref_koharu_translation_model_quantization">Translation Model Quantization</string>
+    <string name="pref_koharu_translation_model_quantization_summary">Select the quantization for the translation model</string>
     <string name="pref_koharu_target_language">Target Language</string>
     <string name="pref_koharu_target_language_summary">Language to translate manga into</string>
     <string name="action_toggle_translation">Toggle Translation</string>
@@ -254,14 +256,17 @@
     <string name="translation_failed">Translation failed</string>
     <string name="translation_not_configured">Please configure Koharu settings first</string>
     <string name="koharu_fetching_models">Fetching available models…</string>
+    <string name="koharu_fetching_languages">Fetching available languages…</string>
     <string name="koharu_no_models_found">No models found. Check your server connection.</string>
+    <string name="koharu_no_languages_found">No languages found. Check your server connection.</string>
+    <string name="koharu_no_model_quantizations_found">This translation model doesn't offer any quantization.</string>
     <string name="pref_koharu_configuration">Koharu Configuration</string>
     <string name="pref_koharu_fetching_models">Fetching available models…</string>
     <string name="pref_koharu_connection_error">Failed to connect to Koharu server</string>
-    <string name="pref_koharu_select_model_first">Select a model first</string>
+    <string name="pref_koharu_select_model">Select a model</string>
+    <string name="pref_koharu_select_model_quantization">Select a quantization</string>
+    <string name="pref_koharu_select_target_language">Select a target language</string>
     <string name="pref_koharu_about">About Koharu</string>
-    <string name="pref_koharu_paged">Paged translation</string>
-    <string name="pref_koharu_paged_summary">Indicates if all pages should be translated in the same prompt. This could lead to better results but can be more resource intensive.</string>
 
     <!-- Translation -->
     <string name="action_translate_chapter">Translate chapter</string>

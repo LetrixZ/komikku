@@ -91,7 +91,7 @@ class TranslationPreFetchManager(
      */
     fun isConfigured(): Boolean {
         val serverUrl = koharuPreferences.koharuServerUrl().get()
-        val model = koharuPreferences.koharuLlmModel().get()
+        val model = koharuPreferences.koharuTranslationModel().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
         return serverUrl.isNotBlank() && model.isNotBlank() && language.isNotBlank()
     }
@@ -394,9 +394,9 @@ class TranslationPreFetchManager(
     private suspend fun translateChapter(manga: Manga, chapter: Chapter) {
         val chapterId = chapter.id
         val serverUrl = koharuPreferences.koharuServerUrl().get()
-        val model = koharuPreferences.koharuLlmModel().get()
+        val model = koharuPreferences.koharuTranslationModel().get()
+        val modelQuantization = koharuPreferences.koharuModelQuantization().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
-        val paged = koharuPreferences.koharuPaged().get()
         val pipelineTimeoutMs = koharuPreferences.koharuPipelineTimeoutMs().get()
 
         var translatedCount = 0
@@ -458,8 +458,8 @@ class TranslationPreFetchManager(
                         chapterId = chapterId,
                         pages = allPageData,
                         modelId = model,
+                        modelQuantization = modelQuantization,
                         targetLanguage = language,
-                        paged = paged,
                         timeoutMs = pipelineTimeoutMs
                     )
 
@@ -500,7 +500,7 @@ class TranslationPreFetchManager(
         } catch (e: CancellationException) {
             logcat { "Translation cancelled for chapter $chapterId" }
             notifier.dismissProgress()
-            koharuClient.cancelCurrentOperation(serverUrl)
+            koharuClient.cancelCurrentJob(serverUrl)
             throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR) { "Translation failed for chapter $chapterId: ${e.message}" }

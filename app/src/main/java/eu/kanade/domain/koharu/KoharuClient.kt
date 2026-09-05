@@ -29,65 +29,38 @@ class KoharuClient(
 ) {
 
     @Volatile
-    private var currentOperationId: String? = null
-
-    /**
-     * Data classes for API responses
-     */
-    @Serializable
-    data class LlmCatalogResponse(
-        val localModels: List<LocalModel> = emptyList(),
-    )
+    private var currentJobId: String? = null
 
     @Serializable
-    data class LocalModel(
+    data class Project(
         val name: String,
-        val languages: List<String> = emptyList(),
+        val pages: List<Page>,
     )
 
     @Serializable
-    data class SceneResponse(
-        val scene: SceneData? = null,
-    )
-
-    @Serializable
-    data class SceneData(
-        val pages: Map<String, ScenePage> = emptyMap(),
-    )
-
-    @Serializable
-    data class ScenePage(
+    data class Page(
         val id: String,
+        val label: String,
+        val translated: Boolean,
+    )
+
+    @Serializable
+    data class TranslationModel(
+        val provider: String,
+        val model: String,
         val name: String,
-        val nodes: Map<String, SceneNode> = emptyMap(),
+        val quantizations: List<Quantization>,
     )
 
     @Serializable
-    data class SceneNode(
-        val kind: NodeKind,
+    data class Quantization(
+        val id: String,
     )
 
     @Serializable
-    data class NodeKind(
-        val image: ImageNodeData? = null,
-    )
-
-    @Serializable
-    data class ImageNodeData(
-        val role: String,
-    )
-
-    @Serializable
-    data class LlmState(
-        val status: String,
-        val target: LlmTarget? = null,
-    )
-
-    @Serializable
-    data class LlmTarget(
-        val kind: String,
-        val modelId: String,
-        val providerId: String? = null,
+    data class Language(
+        val tag: String,
+        val name: String,
     )
 
     @Serializable
@@ -102,50 +75,57 @@ class KoharuClient(
 
     @Serializable
     data class PipelineRequest(
-        val steps: List<String>,
-        val targetLanguage: String,
-        val paged: Boolean = false,
-        val defaultFont: String? = null,
-        val pages: List<String>? = null,
+        val operation: String,
+        val pages: List<String>,
     )
 
     @Serializable
     data class PipelineResponse(
-        val operationId: String,
+        val job: String,
     )
 
     @Serializable
-    data class OperationsResponse(
-        val operations: List<Operation> = emptyList(),
-    )
-
-    @Serializable
-    data class Operation(
+    data class Job(
         val id: String,
-        val kind: String,
-        val status: String,
+        val state: String,
+        val completed: Int,
+        val total: Int,
         val error: String? = null,
     )
 
     /**
-     * Get the list of available LLM models from Koharu.
+     * Get the list of available translation models from Koharu.
      * @param serverUrl The base URL of the Koharu server
-     * @return List of available models with their supported languages
+     * @return List of available models with their supported quantizations
      */
-    suspend fun getLlmCatalog(serverUrl: String): List<LocalModel> = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/llm/catalog"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
+    suspend fun getTranslationModels(serverUrl: String): List<TranslationModel> = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/translation/models"
+        val request = Request.Builder().url(url).get().build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("Failed to get LLM catalog: ${response.code}")
+                throw IOException("Failed to get translation models: ${response.code}")
             }
             val body = response.body.string()
-            val catalog = json.decodeFromString<LlmCatalogResponse>(body)
-            catalog.localModels
+            json.decodeFromString<List<TranslationModel>>(body)
+        }
+    }
+
+    /**
+     * Get the list of available target languages from Koharu.
+     * @param serverUrl The base URL of the Koharu server
+     * @return List of available target languages
+     */
+    suspend fun getTargetLanguages(serverUrl: String): List<Language> = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/translation/languages"
+        val request = Request.Builder().url(url).get().build()
+
+        networkHelper.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("Failed to get languages: ${response.code}")
+            }
+            val body = response.body.string()
+            json.decodeFromString<List<Language>>(body)
         }
     }
 
@@ -155,16 +135,17 @@ class KoharuClient(
      * @param projectId The project ID to load
      * @return True if the project was loaded successfully, false if it doesn't exist
      */
-    suspend fun loadProject(serverUrl: String, projectId: String): Boolean = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/projects/current"
-        val body = """{"id":"$projectId"}"""
-        val request = Request.Builder()
-            .url(url)
-            .put(body.toRequestBody("application/json".toMediaType()))
-            .build()
+    suspend fun loadProject(serverUrl: String, projectId: String): Project? = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId"
+        val request = Request.Builder().url(url).get().build()
 
         networkHelper.client.newCall(request).execute().use { response ->
-            response.isSuccessful
+            if (response.isSuccessful) {
+                val responseBody = response.body.string()
+                json.decodeFromString<Project>(responseBody)
+            } else {
+                null
+            }
         }
     }
 
@@ -175,12 +156,9 @@ class KoharuClient(
      * @return The created project
      */
     suspend fun createProject(serverUrl: String, projectName: String): CreateProjectResponse = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/projects"
+        val url = "${serverUrl.trimEnd('/')}/v1/projects"
         val body = """{"name":"$projectName"}"""
-        val request = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
+        val request = Request.Builder().url(url).post(body.toRequestBody("application/json".toMediaType())).build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -197,134 +175,48 @@ class KoharuClient(
      * @param pages List of pairs (filename, image bytes)
      * @return List of page IDs that were added, in the same order as input
      */
-    suspend fun addPages(serverUrl: String, pages: List<Pair<String, ByteArray>>): List<String> = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/pages"
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .apply {
-                for ((filename, bytes) in pages) {
-                    addFormDataPart(
-                        "page",
-                        filename,
-                        bytes.toRequestBody("image/png".toMediaType()),
-                    )
-                }
+    suspend fun addPages(serverUrl: String, projectId: String, pages: List<Pair<String, ByteArray>>): List<String> = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId/images"
+        val requestBody = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            for ((filename, bytes) in pages) {
+                addFormDataPart(
+                    "images",
+                    filename,
+                    bytes.toRequestBody("image/png".toMediaType()),
+                )
             }
-            .build()
+        }.build()
 
-        val request = Request.Builder()
-            .url(url)
-            .post(requestBody)
-            .build()
+        val request = Request.Builder().url(url).post(requestBody).build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Failed to add pages: ${response.code}")
             }
             val body = response.body.string()
-            val addPagesResponse = json.decodeFromString<AddPagesResponse>(body)
-            addPagesResponse.pages
+            val project = json.decodeFromString<Project>(body)
+            project.pages.map { it.id }
         }
-    }
-
-    /**
-     * Get the current LLM state.
-     * @param serverUrl The base URL of the Koharu server
-     * @return The current LLM state
-     */
-    suspend fun getLlmState(serverUrl: String): LlmState = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/llm/current"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
-
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Failed to get LLM state: ${response.code}")
-            }
-            val body = response.body.string()
-            json.decodeFromString<LlmState>(body)
-        }
-    }
-
-    /**
-     * Load an LLM model.
-     * @param serverUrl The base URL of the Koharu server
-     * @param modelId The model ID to load
-     */
-    suspend fun loadLlm(serverUrl: String, modelId: String) = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/llm/current"
-        val body = """{"target":{"kind":"local","modelId":"$modelId"}}"""
-        val request = Request.Builder()
-            .url(url)
-            .put(body.toRequestBody("application/json".toMediaType()))
-            .build()
-
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("Failed to load LLM: ${response.code}")
-            }
-        }
-    }
-
-    /**
-     * Wait for the LLM to be ready.
-     * @param serverUrl The base URL of the Koharu server
-     * @param timeoutMs Maximum time to wait in milliseconds
-     * @return True if the LLM is ready, false if timeout
-     */
-    suspend fun waitForLlmReady(serverUrl: String, timeoutMs: Long = 60000): Boolean = withIOContext {
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            val state = getLlmState(serverUrl)
-            if (state.status == "ready") {
-                return@withIOContext true
-            }
-            if (state.status == "error") {
-                logcat { "LLM error: ${state.target?.modelId}" }
-                return@withIOContext false
-            }
-            delay(500.milliseconds)
-        }
-        false
     }
 
     /**
      * Run the translation pipeline.
      * @param serverUrl The base URL of the Koharu server
-     * @param targetLanguage The target language for translation
      * @param pageIds Optional list of page IDs to run the pipeline for. If null, runs for all pages.
      * @return The operation ID
      */
     suspend fun runPipeline(
         serverUrl: String,
-        targetLanguage: String,
-        paged: Boolean = false,
-        pageIds: List<String>? = null,
+        projectId: String,
+        pageIds: List<String> = listOf(),
     ): String = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/pipelines"
+        val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId/pipeline"
         val pipelineRequest = PipelineRequest(
-            steps = listOf(
-                "pp-doclayout-v3",
-                "yuzumarker-font-detection",
-                "comic-text-detector-seg",
-                "speech-bubble-segmentation",
-                "paddle-ocr-vl-1.6",
-                "llm",
-                "lama-manga",
-                "koharu-renderer",
-            ),
-            targetLanguage = targetLanguage,
-            paged = paged,
-            defaultFont = "CCMeanwhile-Regular", // TODO: Allow to customize the font
+            operation = "full",
             pages = pageIds,
         )
         val body = json.encodeToString(PipelineRequest.serializer(), pipelineRequest)
-        val request = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
+        val request = Request.Builder().url(url).post(body.toRequestBody("application/json".toMediaType())).build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -332,58 +224,54 @@ class KoharuClient(
             }
             val responseBody = response.body.string()
             val pipelineResponse = json.decodeFromString<PipelineResponse>(responseBody)
-            pipelineResponse.operationId
+            pipelineResponse.job
         }
     }
 
     /**
-     * Get the status of an operation.
+     * Get the status of a job.
      * @param serverUrl The base URL of the Koharu server
-     * @param operationId The operation ID to check
+     * @param jobId The job ID to check
      * @return The operation status
      */
-    suspend fun getOperationStatus(serverUrl: String, operationId: String): Operation = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/operations"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
+    suspend fun getJobStatus(serverUrl: String, jobId: String): Job = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/jobs/$jobId"
+        val request = Request.Builder().url(url).get().build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Failed to get operations: ${response.code}")
             }
             val body = response.body.string()
-            val operations = json.decodeFromString<OperationsResponse>(body)
-            operations.operations.find { it.id == operationId }
-                ?: throw IOException("Operation not found: $operationId")
+            json.decodeFromString<Job>(body)
         }
     }
 
     /**
-     * Wait for a pipeline operation to complete.
+     * Wait for a pipeline job to complete.
      * @param serverUrl The base URL of the Koharu server
-     * @param operationId The operation ID to wait for
+     * @param jobId The job ID to wait for
      * @param timeoutMs Maximum time to wait in milliseconds
      * @return True if completed successfully, false if failed or timeout
      */
     suspend fun waitForPipelineCompletion(
         serverUrl: String,
-        operationId: String,
+        jobId: String,
         timeoutMs: Long = 1800000,
     ): Boolean = withIOContext {
         val startTime = System.currentTimeMillis()
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            val operation = getOperationStatus(serverUrl, operationId)
-            when (operation.status) {
-                "completed" -> return@withIOContext true
-                "completed_with_errors" -> {
-                    logcat { "Pipeline completed with errors: ${operation.error}" }
+            val job = getJobStatus(serverUrl, jobId)
+            when (job.state) {
+                "finished" -> return@withIOContext true
+
+                "failed" -> {
+                    logcat { "Pipeline failed: ${job.error}" }
                     return@withIOContext false
                 }
 
-                "failed" -> {
-                    logcat { "Pipeline failed: ${operation.error}" }
+                "stopped" -> {
+                    logcat { "Pipeline stopped: ${job.error}" }
                     return@withIOContext false
                 }
             }
@@ -393,78 +281,60 @@ class KoharuClient(
     }
 
     /**
-     * Cancel a running operation.
+     * Cancel a running job.
      * @param serverUrl The base URL of the Koharu server
-     * @param operationId The operation ID to cancel
+     * @param jobId The job ID to cancel
      */
-    suspend fun cancelOperation(serverUrl: String, operationId: String) = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/operations/$operationId"
-        val request = Request.Builder()
-            .url(url)
-            .delete()
-            .build()
+    suspend fun stopJob(serverUrl: String, jobId: String) = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/jobs/$jobId"
+        val request = Request.Builder().url(url).delete().build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                logcat { "Failed to cancel operation: ${response.code}" }
+                logcat { "Failed to cancel job: ${response.code}" }
             }
         }
     }
 
     /**
-     * Cancel the currently running operation, if any.
+     * Cancel the currently running job, if any.
      * Uses NonCancellable context to ensure the cancellation request is sent
-     * even when the calling coroutine is already cancelled.
+     * even when the calling coroutine is already canceled.
      * @param serverUrl The base URL of the Koharu server
      */
-    suspend fun cancelCurrentOperation(serverUrl: String) {
-        val operationId = currentOperationId ?: return
+    suspend fun cancelCurrentJob(serverUrl: String) {
+        val jobId = currentJobId ?: return
         withContext(NonCancellable) {
-            cancelOperation(serverUrl, operationId)
+            stopJob(serverUrl, jobId)
         }
     }
 
     /**
      * Export translated images from the current project.
-     * Handles both single-image (direct image data) and multi-page (ZIP) responses.
+     * Handles multipage (ZIP) responses.
      * @param serverUrl The base URL of the Koharu server
-     * @param expectedPageIds The page IDs we expect in the export, used for single-image fallback
      * @return Map of pageId to image bytes
      */
     suspend fun exportTranslatedPages(
         serverUrl: String,
-        expectedPageIds: Set<String>,
+        projectId: String,
     ): Map<String, ByteArray> = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/projects/current/export"
-        val body = """{"format":"rendered"}"""
-        val request = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
+        val url = "${serverUrl.trimEnd('/')}/v1/projects/$projectId/export.zip"
+        val request = Request.Builder().url(url).get().build()
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("Failed to export project: ${response.code}")
             }
 
-            val contentType = response.header("content-type") ?: ""
             val responseBytes = response.body.bytes()
-
-            if (contentType.contains("zip") || contentType.contains("application/zip")) {
-                // Multi-page response: ZIP file
-                parseZipExport(responseBytes)
-            } else {
-                // Single image response
-                val pageId = expectedPageIds.firstOrNull()
-                    ?: throw IOException("No expected page IDs for single-image export")
-                mapOf(pageId to responseBytes)
-            }
+            parseZipExport(responseBytes)
         }
     }
 
     /**
      * Parse a ZIP export response and extract page images.
-     * ZIP entries have format: page-{pageNumber}-{pageId}.png
+     * ZIP entries have format: {index}_{originalName}.png (e.g. 0001_page-1.png)
      */
     private fun parseZipExport(zipBytes: ByteArray): Map<String, ByteArray> {
         val result = mutableMapOf<String, ByteArray>()
@@ -473,13 +343,11 @@ class KoharuClient(
             while (entry != null) {
                 if (!entry.isDirectory) {
                     val name = entry.name
-                    // Format: page-{pageNumber}-{pageId}.png
-                    val nameWithoutExt = name.removeSuffix(".png")
-                    val afterPrefix = nameWithoutExt.removePrefix("page-")
-                    val dashIndex = afterPrefix.indexOf('-')
-                    if (dashIndex > 0) {
-                        val pageId = afterPrefix.substring(dashIndex + 1)
-                        result[pageId] = zis.readBytes()
+                    // Format: {index}_{originalName}.png
+                    val underscoreIndex = name.indexOf('_')
+                    if (underscoreIndex > 0) {
+                        val originalName = name.substring(underscoreIndex + 1)
+                        result[originalName] = zis.readBytes()
                     }
                 }
                 entry = zis.nextEntry
@@ -488,40 +356,18 @@ class KoharuClient(
         return result
     }
 
-    /**
-     * Ensure the specified LLM model is loaded and ready.
-     * Loads the model if it's not currently loaded.
-     */
-    private suspend fun ensureLlmLoaded(serverUrl: String, modelId: String) {
-        val llmState = getLlmState(serverUrl)
-        if (llmState.status != "ready" || llmState.target?.modelId != modelId) {
-            loadLlm(serverUrl, modelId)
-            if (!waitForLlmReady(serverUrl)) {
-                throw IOException("LLM failed to load: $modelId")
-            }
-        }
-    }
+    private suspend fun setTranslationPreferences(
+        serverUrl: String,
+        modelId: String,
+        modelQuantization: String,
+        targetLanguage: String,
+    ) = withIOContext {
+        val url = "${serverUrl.trimEnd('/')}/v1/translation/preferences"
+        val body =
+            """{"model":{"provider":"local","model":"$modelId","quantization":"$modelQuantization","vision":true,"reasoning":true},"target_language":"$targetLanguage"}"""
+        val request = Request.Builder().url(url).put(body.toRequestBody("application/json".toMediaType())).build()
 
-    /**
-     * Get the current scene data.
-     * @param serverUrl The base URL of the Koharu server
-     * @return The scene data, or null if not available
-     */
-    private suspend fun getScene(serverUrl: String): SceneData? = withIOContext {
-        val url = "${serverUrl.trimEnd('/')}/api/v1/scene.json"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .build()
-
-        networkHelper.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                return@use null
-            }
-            val body = response.body.string()
-            val sceneResponse = json.decodeFromString<SceneResponse>(body)
-            sceneResponse.scene
-        }
+        networkHelper.client.newCall(request).execute()
     }
 
     /**
@@ -539,111 +385,91 @@ class KoharuClient(
         chapterId: Long,
         pages: List<ChapterPageData>,
         modelId: String,
+        modelQuantization: String,
         targetLanguage: String,
-        paged: Boolean,
         timeoutMs: Long,
     ): Map<Int, ByteArray> = withIOContext {
         val projectId = "$chapterId-$modelId-$targetLanguage"
 
-        // pageId -> pageIndex mapping
-        val pageIdToIndex = mutableMapOf<String, Int>()
+        val pageLabelToIndex = mutableMapOf<String, Int>()
 
-        // Try to load existing project
-        val projectLoaded = loadProject(serverUrl, projectId)
+        val project = loadProject(serverUrl, projectId)
 
-        if (projectLoaded) {
-            // Get scene to check current state
-            val scene = getScene(serverUrl)
-            val scenePages = scene?.pages ?: emptyMap()
-
+        if (project != null) {
             val pagesNeedingPipeline = mutableListOf<String>()
 
-            // Match our pages to scene pages by name
             for (pageData in pages) {
                 val pageName = pageData.name
-                val scenePage = scenePages.values.find { it.name == pageName }
-
-                if (scenePage != null) {
-                    pageIdToIndex[scenePage.id] = pageData.index
-                    // Check if it has a rendered image node
-                    val hasRendered = scenePage.nodes.values.any {
-                        it.kind.image?.role == "rendered"
-                    }
-                    if (!hasRendered) {
-                        pagesNeedingPipeline.add(scenePage.id)
+                val projectPage = project.pages.find { it.label == pageName }
+                if (projectPage != null) {
+                    pageLabelToIndex[projectPage.label] = pageData.index
+                    if (!projectPage.translated) {
+                        pagesNeedingPipeline.add(projectPage.id)
                     }
                 }
             }
 
-            // Upload pages that are missing from the scene
             val missingPages = pages.filter { pageData ->
-                scenePages.values.none { it.name == pageData.name }
+                project.pages.none { it.label == pageData.name }
             }
 
             if (missingPages.isNotEmpty()) {
-                val newPageIds = addPages(serverUrl, missingPages.map { it.name to it.stream().readBytes() })
+                val newPageIds = addPages(serverUrl, projectId, missingPages.map { it.name to it.stream().readBytes() })
                 for ((i, pageId) in newPageIds.withIndex()) {
-                    pageIdToIndex[pageId] = missingPages[i].index
+                    pageLabelToIndex[pageId] = missingPages[i].index
                     pagesNeedingPipeline.add(pageId)
                 }
             }
 
-            // Run pipeline for pages that need it
             if (pagesNeedingPipeline.isNotEmpty()) {
-                ensureLlmLoaded(serverUrl, modelId)
-                val operationId = runPipeline(serverUrl, targetLanguage, paged, pagesNeedingPipeline)
-                currentOperationId = operationId
+                setTranslationPreferences(serverUrl, modelId, modelQuantization, targetLanguage)
+
+                val jobId = runPipeline(serverUrl, projectId, pagesNeedingPipeline)
+                currentJobId = jobId
                 try {
-                    if (!waitForPipelineCompletion(serverUrl, operationId, timeoutMs)) {
+                    if (!waitForPipelineCompletion(serverUrl, jobId, timeoutMs)) {
                         throw IOException("Pipeline failed or timed out")
                     }
                 } catch (e: CancellationException) {
                     withContext(NonCancellable) {
-                        cancelOperation(serverUrl, operationId)
+                        stopJob(serverUrl, jobId)
                     }
                     throw e
                 } finally {
-                    currentOperationId = null
+                    currentJobId = null
                 }
             }
         } else {
-            // Create new project
             createProject(serverUrl, projectId)
-            // Project is automatically loaded
 
-            // Upload all pages
-            val pageIds = addPages(serverUrl, pages.map { it.name to it.stream().readBytes() })
+            val pageIds = addPages(serverUrl, projectId, pages.map { it.name to it.stream().readBytes() })
             for ((i, pageId) in pageIds.withIndex()) {
-                pageIdToIndex[pageId] = pages[i].index
+                pageLabelToIndex[pageId] = pages[i].index
             }
 
-            // Load LLM
-            ensureLlmLoaded(serverUrl, modelId)
+            setTranslationPreferences(serverUrl, modelId, modelQuantization, targetLanguage)
 
-            // Run pipeline for all pages (no pageIds filter)
-            val operationId = runPipeline(serverUrl, targetLanguage, paged)
-            currentOperationId = operationId
+            val operationId = runPipeline(serverUrl, projectId)
+            currentJobId = operationId
             try {
                 if (!waitForPipelineCompletion(serverUrl, operationId, timeoutMs)) {
                     throw IOException("Pipeline failed or timed out")
                 }
             } catch (e: CancellationException) {
                 withContext(NonCancellable) {
-                    cancelOperation(serverUrl, operationId)
+                    stopJob(serverUrl, operationId)
                 }
                 throw e
             } finally {
-                currentOperationId = null
+                currentJobId = null
             }
         }
 
-        // Export translated pages
-        val exportedPages = exportTranslatedPages(serverUrl, pageIdToIndex.keys)
+        val exportedPages = exportTranslatedPages(serverUrl, projectId)
 
-        // Map pageIds back to page indices
         val result = mutableMapOf<Int, ByteArray>()
-        for ((pageId, bytes) in exportedPages) {
-            val index = pageIdToIndex[pageId]
+        for ((pageName, bytes) in exportedPages) {
+            val index = pageLabelToIndex[pageName]
             if (index != null) {
                 result[index] = bytes
             }
