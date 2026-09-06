@@ -400,7 +400,6 @@ class TranslationPreFetchManager(
         val modelReasoning = koharuPreferences.koharuModelReasoning().get()
         val modelVision = koharuPreferences.koharuModelVision().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
-        val pipelineTimeoutMs = koharuPreferences.koharuPipelineTimeoutMs().get()
 
         var translatedCount = 0
         var pages: List<ReaderPage> = emptyList()
@@ -465,7 +464,6 @@ class TranslationPreFetchManager(
                         modelReasoning = modelReasoning,
                         modelVision = modelVision,
                         targetLanguage = language,
-                        timeoutMs = pipelineTimeoutMs,
                         onProgress = { completed, total ->
                             if (total > 0) {
                                 updateProgress(chapterId, completed, total)

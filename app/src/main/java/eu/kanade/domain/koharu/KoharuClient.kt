@@ -251,37 +251,38 @@ class KoharuClient(
 
     /**
      * Wait for a pipeline job to complete.
+     * Terminates when the job reaches a terminal state ("finished", "stopped" or "failed"),
+     * or when the calling coroutine is cancelled (e.g. the user cancels the translation).
+     * Translations can run for a long time, so there is no timeout.
      * @param serverUrl The base URL of the Koharu server
      * @param jobId The job ID to wait for
-     * @param timeoutMs Maximum time to wait in milliseconds
      * @param onProgress Optional callback invoked with the job progress (completed, total) on each poll
-     * @return True if completed successfully, false if failed or timeout
+     * @return True if completed successfully or stopped (finished early), false if the job failed
      */
     suspend fun waitForPipelineCompletion(
         serverUrl: String,
         jobId: String,
-        timeoutMs: Long = 1800000,
         onProgress: ((completed: Int, total: Int) -> Unit)? = null,
     ): Boolean = withIOContext {
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
+        while (true) {
             val job = getJobStatus(serverUrl, jobId)
             onProgress?.invoke(job.completed, job.total)
             when (job.state) {
                 "finished" -> return@withIOContext true
 
+                "stopped" -> {
+                    logcat { "Pipeline stopped (completed early): ${job.error}" }
+                    return@withIOContext true
+                }
+
                 "failed" -> {
                     logcat { "Pipeline failed: ${job.error}" }
                     return@withIOContext false
                 }
-
-                "stopped" -> {
-                    logcat { "Pipeline stopped: ${job.error}" }
-                    return@withIOContext false
-                }
             }
-            delay(1000.milliseconds)
+            delay(5000.milliseconds)
         }
+        @Suppress("UNREACHABLE_CODE")
         false
     }
 
@@ -396,7 +397,6 @@ class KoharuClient(
         modelReasoning: Boolean,
         modelVision: Boolean,
         targetLanguage: String,
-        timeoutMs: Long,
         onProgress: ((completed: Int, total: Int) -> Unit)? = null,
     ): Map<Int, ByteArray> = withIOContext {
         val projectId = listOfNotNull(
@@ -450,8 +450,8 @@ class KoharuClient(
                 val jobId = runPipeline(serverUrl, projectId, pagesNeedingPipeline)
                 currentJobId = jobId
                 try {
-                    if (!waitForPipelineCompletion(serverUrl, jobId, timeoutMs, onProgress)) {
-                        throw IOException("Pipeline failed or timed out")
+                    if (!waitForPipelineCompletion(serverUrl, jobId, onProgress)) {
+                        throw IOException("Pipeline failed")
                     }
                 } catch (e: CancellationException) {
                     withContext(NonCancellable) {
@@ -482,8 +482,8 @@ class KoharuClient(
             val operationId = runPipeline(serverUrl, projectId)
             currentJobId = operationId
             try {
-                if (!waitForPipelineCompletion(serverUrl, operationId, timeoutMs, onProgress)) {
-                    throw IOException("Pipeline failed or timed out")
+                if (!waitForPipelineCompletion(serverUrl, operationId, onProgress)) {
+                    throw IOException("Pipeline failed")
                 }
             } catch (e: CancellationException) {
                 withContext(NonCancellable) {
