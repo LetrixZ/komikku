@@ -51,8 +51,16 @@ class TranslationNotifier(private val context: Context) {
 
     /**
      * Called when translation progress changes.
+     * @param showAsPercentage When true, `current`/`total` are internal pipeline units (not pages)
+     * and the notification shows a percentage instead of "pages translated".
      */
-    fun onProgressChange(mangaTitle: String, chapterName: String, translatedPages: Int, totalPages: Int) {
+    fun onProgressChange(
+        mangaTitle: String,
+        chapterName: String,
+        current: Int,
+        total: Int,
+        showAsPercentage: Boolean = false,
+    ) {
         with(progressNotificationBuilder) {
             if (!isTranslating) {
                 setSmallIcon(android.R.drawable.stat_sys_download)
@@ -61,11 +69,16 @@ class TranslationNotifier(private val context: Context) {
                 isTranslating = true
             }
 
-            val progressText = "Translating $translatedPages/$totalPages pages"
+            val progressText = if (showAsPercentage) {
+                val percent = if (total > 0) (current * 100) / total else 0
+                "Translating $percent%"
+            } else {
+                "Translating $current/$total pages"
+            }
 
             setContentTitle("$mangaTitle - $chapterName".chop(30))
             setContentText(progressText)
-            setProgress(totalPages, translatedPages, false)
+            setProgress(total, current, false)
             setOngoing(true)
 
             show(Notifications.ID_TRANSLATION_PROGRESS)

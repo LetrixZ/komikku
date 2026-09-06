@@ -469,6 +469,7 @@ class TranslationPreFetchManager(
                         onProgress = { completed, total ->
                             if (total > 0) {
                                 updateProgress(chapterId, completed, total)
+                                notifier.onProgressChange(manga.title, chapter.name, completed, total, showAsPercentage = true)
                             }
                         },
                     )

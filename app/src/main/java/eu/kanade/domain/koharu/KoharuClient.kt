@@ -242,7 +242,7 @@ class KoharuClient(
 
         networkHelper.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IOException("Failed to get operations: ${response.code}")
+                throw IOException("Failed to get job: ${response.code}")
             }
             val body = response.body.string()
             json.decodeFromString<Job>(body)
