@@ -43,6 +43,7 @@ import java.io.File
  */
 class TranslationPreFetchManager(
     private val koharuClient: KoharuClient,
+    private val koharuClientV1: KoharuClientV1,
     private val koharuPreferences: KoharuPreferences,
     private val translationStorage: TranslationStorage,
     private val downloadManager: DownloadManager = Injekt.get(),
@@ -92,9 +93,13 @@ class TranslationPreFetchManager(
     fun isConfigured(): Boolean {
         val serverUrl = koharuPreferences.koharuServerUrl().get()
         val model = koharuPreferences.koharuTranslationModel().get()
-        val modelQuantization = koharuPreferences.koharuModelQuantization().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
-        return serverUrl.isNotBlank() && model.isNotBlank() && modelQuantization.isNotBlank() && language.isNotBlank()
+        return if (koharuPreferences.koharuUseOldClient().get()) {
+            serverUrl.isNotBlank() && model.isNotBlank() && language.isNotBlank()
+        } else {
+            val modelQuantization = koharuPreferences.koharuModelQuantization().get()
+            serverUrl.isNotBlank() && model.isNotBlank() && modelQuantization.isNotBlank() && language.isNotBlank()
+        }
     }
 
     /**
@@ -400,6 +405,7 @@ class TranslationPreFetchManager(
         val modelReasoning = koharuPreferences.koharuModelReasoning().get()
         val modelVision = koharuPreferences.koharuModelVision().get()
         val language = koharuPreferences.koharuTargetLanguage().get()
+        val useOldClient = koharuPreferences.koharuUseOldClient().get()
 
         var translatedCount = 0
         var pages: List<ReaderPage> = emptyList()
@@ -455,22 +461,33 @@ class TranslationPreFetchManager(
                     }
 
                     // Translate entire chapter via Koharu
-                    val translatedPages = koharuClient.translateChapter(
-                        serverUrl = serverUrl,
-                        chapterId = chapterId,
-                        pages = allPageData,
-                        modelId = model,
-                        modelQuantization = modelQuantization,
-                        modelReasoning = modelReasoning,
-                        modelVision = modelVision,
-                        targetLanguage = language,
-                        onProgress = { completed, total ->
-                            if (total > 0) {
-                                updateProgress(chapterId, completed, total)
-                                notifier.onProgressChange(manga.title, chapter.name, completed, total, showAsPercentage = true)
-                            }
-                        },
-                    )
+                    val translatedPages = if (useOldClient) {
+                        koharuClientV1.translateChapter(
+                            serverUrl = serverUrl,
+                            chapterId = chapterId,
+                            pages = allPageData,
+                            modelId = model,
+                            targetLanguage = language,
+                            paged = false,
+                        )
+                    } else {
+                        koharuClient.translateChapter(
+                            serverUrl = serverUrl,
+                            chapterId = chapterId,
+                            pages = allPageData,
+                            modelId = model,
+                            modelQuantization = modelQuantization,
+                            modelReasoning = modelReasoning,
+                            modelVision = modelVision,
+                            targetLanguage = language,
+                            onProgress = { completed, total ->
+                                if (total > 0) {
+                                    updateProgress(chapterId, completed, total)
+                                    notifier.onProgressChange(manga.title, chapter.name, completed, total, showAsPercentage = true)
+                                }
+                            },
+                        )
+                    }
 
                     // Save translated pages to persistent storage
                     for ((index, bytes) in translatedPages) {
@@ -509,7 +526,11 @@ class TranslationPreFetchManager(
         } catch (e: CancellationException) {
             logcat { "Translation cancelled for chapter $chapterId" }
             notifier.dismissProgress()
-            koharuClient.cancelCurrentJob(serverUrl)
+            if (useOldClient) {
+                koharuClientV1.cancelCurrentOperation(serverUrl)
+            } else {
+                koharuClient.cancelCurrentJob(serverUrl)
+            }
             throw e
         } catch (e: Exception) {
             logcat(LogPriority.ERROR) { "Translation failed for chapter $chapterId: ${e.message}" }

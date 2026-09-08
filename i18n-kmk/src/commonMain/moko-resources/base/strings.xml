@@ -283,4 +283,6 @@
     <string name="action_show_translated">Show translated images</string>
     <string name="translation_not_available">No translation available for this chapter. Download and translate it first.</string>
     <string name="translation_download_first">Download the chapter first before translating</string>
+    <string name="pref_koharu_use_old_client">Use legacy client</string>
+    <string name="pref_koharu_use_old_client_summary">Use the old Koharu V1 API. Models have no quantization, and each model defines its own target languages.</string>
 </resources>

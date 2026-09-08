@@ -20,6 +20,12 @@ import java.io.IOException
 import java.io.InputStream
 import kotlin.time.Duration.Companion.milliseconds
 
+data class ChapterPageData(
+    val index: Int,
+    val name: String,
+    val stream: () -> InputStream,
+)
+
 /**
  * Client for Koharu manga translation service API.
  * Handles all communication with the self-hosted Koharu server.
@@ -508,9 +514,3 @@ class KoharuClient(
         result
     }
 }
-
-data class ChapterPageData(
-    val index: Int,
-    val name: String,
-    val stream: () -> InputStream,
-)
